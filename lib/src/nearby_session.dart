@@ -6,6 +6,7 @@ import 'models/peer.dart';
 import 'payload/payload_manager.dart';
 import 'protocol/packet_framer.dart';
 import 'protocol/security_manager.dart';
+import 'transport/ble_transport.dart';
 import 'transport/transport.dart';
 
 /// Manages active peer session, protocol handshakes, SAS verification, and data transport.
@@ -17,9 +18,12 @@ class NearbySession {
   final PayloadManager payloadManager;
   final Directory? storageDirectory;
 
-  final String _localToken = SecurityManager.generateHandshakeToken();
+  final SecurityKeyPair _keyPair = SecurityManager.generateKeyPair();
+  String get _localToken => _keyPair.publicKeyHex;
   String? _remoteToken;
+  String? _sharedSecret;
   String? _sasPin;
+  DateTime _lastTxTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   PeerConnectionState _state = PeerConnectionState.connecting;
   final Completer<bool> _handshakeCompleter = Completer<bool>();
@@ -53,7 +57,11 @@ class NearbySession {
   void _init() {
     _frameSubscription = transport.incomingFrames.listen(
       (frame) async {
-        await handleFrame(frame);
+        try {
+          await handleFrame(frame);
+        } catch (error) {
+          disconnect(reason: 'Frame processing error: $error');
+        }
       },
       onError: (error) {
         disconnect(reason: 'Transport error: $error');
@@ -131,11 +139,16 @@ class NearbySession {
         peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
 
         if (_remoteToken != null) {
+          _sharedSecret = SecurityManager.computeSharedSecret(
+            privateKey: _keyPair.privateKey,
+            remotePublicKeyHex: _remoteToken!,
+          );
           _sasPin = SecurityManager.calculateSasPin(
             localPeerId: localPeerId,
             localToken: _localToken,
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
+            sharedSecretHex: _sharedSecret,
           );
         }
         _setState(PeerConnectionState.authenticating);
@@ -152,11 +165,16 @@ class NearbySession {
               json['displayName'] as String? ?? peer.displayName;
           peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
 
+          _sharedSecret = SecurityManager.computeSharedSecret(
+            privateKey: _keyPair.privateKey,
+            remotePublicKeyHex: _remoteToken!,
+          );
           _sasPin = SecurityManager.calculateSasPin(
             localPeerId: localPeerId,
             localToken: _localToken,
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
+            sharedSecretHex: _sharedSecret,
           );
           _setState(PeerConnectionState.connected);
           _startHeartbeat();
@@ -197,6 +215,7 @@ class NearbySession {
           peerId: peer.id,
           frame: frame,
           storageDirectory: storageDirectory,
+          transport: transport,
         );
         break;
     }
@@ -206,7 +225,12 @@ class NearbySession {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (_state == PeerConnectionState.connected && transport.isConnected) {
+        // Only send heartbeat if no payload/control traffic was sent recently
+        if (DateTime.now().difference(_lastTxTime) < const Duration(seconds: 4)) {
+          return;
+        }
         try {
+          _lastTxTime = DateTime.now();
           await transport.sendFrame(PacketFrame.heartbeat());
         } catch (_) {
           disconnect(reason: 'Heartbeat send failed');
@@ -215,16 +239,21 @@ class NearbySession {
     });
   }
 
+  bool get _isBleTransport =>
+      transport is BleTransport || transport is BlePeripheralTransport;
+
   /// Sends a raw byte array payload.
   Future<void> sendBytes(Uint8List bytes, {int? payloadId}) async {
     if (_state != PeerConnectionState.connected) {
       throw StateError('Cannot send data; peer is not connected');
     }
+    _lastTxTime = DateTime.now();
     final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
     await payloadManager.sendBytes(
       transport: transport,
       payloadId: id,
       bytes: bytes,
+      chunkSize: _isBleTransport ? 16 * 1024 : kDefaultChunkSize,
     );
   }
 
@@ -233,12 +262,14 @@ class NearbySession {
     if (_state != PeerConnectionState.connected) {
       throw StateError('Cannot send data; peer is not connected');
     }
+    _lastTxTime = DateTime.now();
     final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
     await payloadManager.sendFile(
       transport: transport,
       payloadId: id,
       file: file,
       customFileName: customFileName,
+      chunkSize: _isBleTransport ? 16 * 1024 : kDefaultChunkSize,
     );
   }
 
@@ -247,6 +278,7 @@ class NearbySession {
     if (_state != PeerConnectionState.connected) {
       throw StateError('Cannot send data; peer is not connected');
     }
+    _lastTxTime = DateTime.now();
     final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
     await payloadManager.sendStream(
       transport: transport,

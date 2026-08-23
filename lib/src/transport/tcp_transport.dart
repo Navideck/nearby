@@ -62,23 +62,32 @@ class TcpTransport implements NearbyTransport {
   /// Completer that resolves when the socket is closed or disconnected.
   Future<void> get done => _doneCompleter.future;
 
+  Future<void> _writeQueue = Future.value();
+
+  Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
+    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
+    _writeQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   @override
   Future<void> sendFrame(PacketFrame frame) async {
     if (_closed) {
       throw StateError('Cannot send frame on closed TCP transport');
     }
     final bytes = frame.toBytes();
-    _socket.add(bytes);
-    await _socket.flush();
+    await sendRaw(bytes);
   }
 
   @override
-  Future<void> sendRaw(Uint8List data) async {
-    if (_closed) {
-      throw StateError('Cannot send raw data on closed TCP transport');
-    }
-    _socket.add(data);
-    await _socket.flush();
+  Future<void> sendRaw(Uint8List data) {
+    return _synchronizedWrite(() async {
+      if (_closed) {
+        throw StateError('Cannot send raw data on closed TCP transport');
+      }
+      _socket.add(data);
+      await _socket.flush();
+    });
   }
 
   @override

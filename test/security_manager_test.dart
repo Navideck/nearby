@@ -3,36 +3,61 @@ import 'package:nearby/nearby.dart';
 
 void main() {
   group('SecurityManager', () {
-    test('generateHandshakeToken generates non-empty distinct hex strings', () {
-      final token1 = SecurityManager.generateHandshakeToken();
-      final token2 = SecurityManager.generateHandshakeToken();
+    test('generateKeyPair generates valid DH keys and shared secrets', () {
+      final aliceKeys = SecurityManager.generateKeyPair();
+      final bobKeys = SecurityManager.generateKeyPair();
 
-      expect(token1.length, equals(64)); // 32 bytes hex encoded
-      expect(token2.length, equals(64));
-      expect(token1, isNot(equals(token2)));
+      expect(aliceKeys.publicKeyHex.isNotEmpty, isTrue);
+      expect(bobKeys.publicKeyHex.isNotEmpty, isTrue);
+      expect(aliceKeys.publicKeyHex, isNot(equals(bobKeys.publicKeyHex)));
+
+      // Compute shared secrets on both sides
+      final aliceSecret = SecurityManager.computeSharedSecret(
+        privateKey: aliceKeys.privateKey,
+        remotePublicKeyHex: bobKeys.publicKeyHex,
+      );
+      final bobSecret = SecurityManager.computeSharedSecret(
+        privateKey: bobKeys.privateKey,
+        remotePublicKeyHex: aliceKeys.publicKeyHex,
+      );
+
+      expect(aliceSecret, equals(bobSecret));
+      expect(aliceSecret.isNotEmpty, isTrue);
     });
 
-    test('calculateSasPin produces symmetric identical PIN on both sides', () {
-      const localId = 'peer_A_iPhone';
-      const localToken = 'token_secret_11111111111111111111111111111111';
-      const remoteId = 'peer_B_Pixel';
-      const remoteToken = 'token_secret_22222222222222222222222222222222';
+    test('calculateSasPin produces symmetric identical PIN on both sides with DH shared secret', () {
+      final aliceKeys = SecurityManager.generateKeyPair();
+      final bobKeys = SecurityManager.generateKeyPair();
+
+      final aliceSecret = SecurityManager.computeSharedSecret(
+        privateKey: aliceKeys.privateKey,
+        remotePublicKeyHex: bobKeys.publicKeyHex,
+      );
+      final bobSecret = SecurityManager.computeSharedSecret(
+        privateKey: bobKeys.privateKey,
+        remotePublicKeyHex: aliceKeys.publicKeyHex,
+      );
+
+      const aliceId = 'peer_alice_device';
+      const bobId = 'peer_bob_device';
 
       // Side A computes PIN:
       final pinSideA = SecurityManager.calculateSasPin(
-        localPeerId: localId,
-        localToken: localToken,
-        remotePeerId: remoteId,
-        remoteToken: remoteToken,
+        localPeerId: aliceId,
+        localToken: aliceKeys.publicKeyHex,
+        remotePeerId: bobId,
+        remoteToken: bobKeys.publicKeyHex,
+        sharedSecretHex: aliceSecret,
         pinDigits: 4,
       );
 
       // Side B computes PIN with roles reversed:
       final pinSideB = SecurityManager.calculateSasPin(
-        localPeerId: remoteId,
-        localToken: remoteToken,
-        remotePeerId: localId,
-        remoteToken: localToken,
+        localPeerId: bobId,
+        localToken: bobKeys.publicKeyHex,
+        remotePeerId: aliceId,
+        remoteToken: aliceKeys.publicKeyHex,
+        sharedSecretHex: bobSecret,
         pinDigits: 4,
       );
 
@@ -41,7 +66,16 @@ void main() {
       expect(pinSideA, equals(pinSideB));
     });
 
-    test('calculateSasPin respects custom digit count', () {
+    test('calculateSasPin respects 4 and 6 digit counts and rejects others', () {
+      final pin4 = SecurityManager.calculateSasPin(
+        localPeerId: 'id1',
+        localToken: 'tok1',
+        remotePeerId: 'id2',
+        remoteToken: 'tok2',
+        pinDigits: 4,
+      );
+      expect(pin4.length, equals(4));
+
       final pin6 = SecurityManager.calculateSasPin(
         localPeerId: 'id1',
         localToken: 'tok1',
@@ -49,9 +83,40 @@ void main() {
         remoteToken: 'tok2',
         pinDigits: 6,
       );
-
       expect(pin6.length, equals(6));
-      expect(int.tryParse(pin6), isNotNull);
+
+      expect(
+        () => SecurityManager.calculateSasPin(
+          localPeerId: 'id1',
+          localToken: 'tok1',
+          remotePeerId: 'id2',
+          remoteToken: 'tok2',
+          pinDigits: 0,
+        ),
+        throwsArgumentError,
+      );
+
+      expect(
+        () => SecurityManager.calculateSasPin(
+          localPeerId: 'id1',
+          localToken: 'tok1',
+          remotePeerId: 'id2',
+          remoteToken: 'tok2',
+          pinDigits: 8,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('deriveSessionKey produces 32-byte authenticated session key', () {
+      final digest = SecurityManager.computeTranscriptDigest(
+        localPeerId: 'p1',
+        localToken: 't1',
+        remotePeerId: 'p2',
+        remoteToken: 't2',
+      );
+      final key = SecurityManager.deriveSessionKey(transcriptDigest: digest);
+      expect(key.length, equals(32));
     });
 
     test('computeSha256 produces valid 64-character hex digest', () {

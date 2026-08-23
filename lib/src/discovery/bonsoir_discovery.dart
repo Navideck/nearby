@@ -27,10 +27,10 @@ class BonsoirDiscoveryService {
     await stopBroadcasting();
 
     final attributes = <String, String>{
+      ...metadata,
       'id': peerId,
       'name': displayName,
       'port': port.toString(),
-      ...metadata,
     };
 
     final formattedType = serviceType.startsWith('_')

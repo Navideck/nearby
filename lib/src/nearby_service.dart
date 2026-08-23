@@ -54,6 +54,7 @@ class NearbyService {
 
   bool _isAdvertising = false;
   bool _isDiscovering = false;
+  int _pendingHandshakeCount = 0;
   AdvertisingOptions? _currentAdvertisingOptions;
 
   NearbyService({
@@ -114,39 +115,48 @@ class NearbyService {
     await stopAdvertising();
     _currentAdvertisingOptions = options;
 
-    // Start TCP server
-    _tcpServer = await TcpServer.bind(port: options.port ?? 0);
-    _serverSubscription =
-        _tcpServer!.incomingConnections.listen(_handleIncomingSocket);
+    try {
+      // Start TCP server only for strategies requiring LAN socket communication
+      if (options.strategy == DiscoveryStrategy.hybrid ||
+          options.strategy == DiscoveryStrategy.mdnsOnly) {
+        _tcpServer = await TcpServer.bind(port: options.port ?? 0);
+        _serverSubscription =
+            _tcpServer!.incomingConnections.listen(_handleIncomingSocket);
+      }
 
-    // Listen for incoming BLE peripheral connections
-    _bleServerSubscription = _discoveryCoordinator.incomingBleTransports
-        .listen(_handleIncomingBleTransport);
+      // Listen for incoming BLE peripheral connections
+      if (options.strategy == DiscoveryStrategy.hybrid ||
+          options.strategy == DiscoveryStrategy.bleOnly) {
+        _bleServerSubscription = _discoveryCoordinator.incomingBleTransports
+            .listen(_handleIncomingBleTransport);
+      }
 
-    // Start discovery broadcast
-    await _discoveryCoordinator.startAdvertising(
-      peerId: localPeerId,
-      displayName: localDisplayName,
-      options: options,
-      tcpPort: _tcpServer!.port,
-    );
+      // Start discovery broadcast
+      await _discoveryCoordinator.startAdvertising(
+        peerId: localPeerId,
+        displayName: localDisplayName,
+        options: options,
+        tcpPort: _tcpServer?.port ?? 0,
+      );
 
-    _isAdvertising = true;
+      _isAdvertising = true;
+    } catch (e) {
+      await stopAdvertising();
+      rethrow;
+    }
   }
 
   /// Stops advertising this device.
   Future<void> stopAdvertising() async {
-    if (_isAdvertising) {
-      _isAdvertising = false;
-      _currentAdvertisingOptions = null;
-      await _discoveryCoordinator.stopAdvertising();
-      await _serverSubscription?.cancel();
-      _serverSubscription = null;
-      await _bleServerSubscription?.cancel();
-      _bleServerSubscription = null;
-      await _tcpServer?.close();
-      _tcpServer = null;
-    }
+    _isAdvertising = false;
+    _currentAdvertisingOptions = null;
+    await _discoveryCoordinator.stopAdvertising();
+    await _serverSubscription?.cancel();
+    _serverSubscription = null;
+    await _bleServerSubscription?.cancel();
+    _bleServerSubscription = null;
+    await _tcpServer?.close();
+    _tcpServer = null;
   }
 
   /// Starts discovering nearby advertising peers.
@@ -154,16 +164,19 @@ class NearbyService {
     required DiscoveryOptions options,
   }) async {
     await stopDiscovery();
-    await _discoveryCoordinator.startDiscovery(options: options);
-    _isDiscovering = true;
+    try {
+      await _discoveryCoordinator.startDiscovery(options: options);
+      _isDiscovering = true;
+    } catch (e) {
+      await stopDiscovery();
+      rethrow;
+    }
   }
 
   /// Stops discovering nearby peers.
   Future<void> stopDiscovery() async {
-    if (_isDiscovering) {
-      _isDiscovering = false;
-      await _discoveryCoordinator.stopDiscovery();
-    }
+    _isDiscovering = false;
+    await _discoveryCoordinator.stopDiscovery();
   }
 
   // --- Connection Management ---
@@ -242,7 +255,7 @@ class NearbyService {
   }
 
   void _handleIncomingSocket(Socket socket) {
-    if (_activeSessions.length >= 32) {
+    if (_activeSessions.length + _pendingHandshakeCount >= 32) {
       socket.destroy();
       return;
     }
@@ -258,7 +271,7 @@ class NearbyService {
   }
 
   void _handleIncomingBleTransport(BlePeripheralTransport transport) {
-    if (_activeSessions.length >= 32) {
+    if (_activeSessions.length + _pendingHandshakeCount >= 32) {
       transport.close();
       return;
     }
@@ -278,8 +291,18 @@ class NearbyService {
     String? bleDeviceId,
     void Function()? onCleanup,
   }) {
+    _pendingHandshakeCount++;
+    bool cleanedUp = false;
+    void cleanupPending() {
+      if (!cleanedUp) {
+        cleanedUp = true;
+        _pendingHandshakeCount = max(0, _pendingHandshakeCount - 1);
+      }
+    }
+
     late StreamSubscription sub;
-    final handshakeTimer = Timer(const Duration(seconds: 30), () {
+    final handshakeTimer = Timer(const Duration(seconds: 15), () {
+      cleanupPending();
       sub.cancel();
       transport.close();
       onCleanup?.call();
@@ -287,91 +310,104 @@ class NearbyService {
 
     sub = transport.incomingFrames.listen((frame) async {
       if (frame.type == FrameType.handshakeInit) {
-        handshakeTimer.cancel();
-        await sub.cancel();
+        try {
+          // Extract remote peer info
+          final json =
+              jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+          final String remotePeerId = json['peerId'] as String;
+          final String remoteDisplayName = json['displayName'] as String;
+          final Map<String, String> metadata =
+              (json['metadata'] as Map<dynamic, dynamic>?)?.map(
+                    (k, v) => MapEntry(k.toString(), v.toString()),
+                  ) ??
+                  {};
 
-        // Extract remote peer info
-        final json =
-            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
-        final String remotePeerId = json['peerId'] as String;
-        if (transport is TcpTransport) {
-          transport.updatePeerId(remotePeerId);
-        } else if (transport is BlePeripheralTransport) {
-          transport.updatePeerId(remotePeerId);
-        }
-        final String remoteDisplayName = json['displayName'] as String;
-        final Map<String, String> metadata =
-            (json['metadata'] as Map<dynamic, dynamic>?)?.map(
-                  (k, v) => MapEntry(k.toString(), v.toString()),
-                ) ??
-                {};
+          handshakeTimer.cancel();
+          cleanupPending();
+          await sub.cancel();
 
-        final peer = Peer(
-          id: remotePeerId,
-          displayName: remoteDisplayName,
-          metadata: metadata,
-          discoveredVia: medium,
-          ipAddress: ipAddress,
-          port: port,
-          bleDeviceId: bleDeviceId,
-          lastSeen: DateTime.now(),
-        );
-
-        final session = NearbySession(
-          peer: peer,
-          transport: transport,
-          localPeerId: localPeerId,
-          localDisplayName: localDisplayName,
-          payloadManager: _payloadManager,
-          storageDirectory: storageDirectory,
-        );
-
-        _activeSessions[peer.id] = session;
-
-        session.stateStream.listen((state) {
-          _peerStateController.add(
-            PeerConnectionStateUpdate(
-              peer: peer,
-              state: state,
-              sasPin: session.sasPin,
-            ),
-          );
-          if (state == PeerConnectionState.disconnected) {
-            _activeSessions.remove(peer.id);
+          if (transport is TcpTransport) {
+            transport.updatePeerId(remotePeerId);
+          } else if (transport is BlePeripheralTransport) {
+            transport.updatePeerId(remotePeerId);
           }
-        });
 
-        // Feed HandshakeInit frame into session
-        await session.handleFrame(frame);
+          final peer = Peer(
+            id: remotePeerId,
+            displayName: remoteDisplayName,
+            metadata: metadata,
+            discoveredVia: medium,
+            ipAddress: ipAddress,
+            port: port,
+            bleDeviceId: bleDeviceId,
+            lastSeen: DateTime.now(),
+          );
 
-        final request = ConnectionRequest(
-          peer: peer,
-          authenticationPin: session.sasPin ?? '0000',
-          metadata: metadata,
-          timestamp: DateTime.now(),
-        );
+          final session = NearbySession(
+            peer: peer,
+            transport: transport,
+            localPeerId: localPeerId,
+            localDisplayName: localDisplayName,
+            payloadManager: _payloadManager,
+            storageDirectory: storageDirectory,
+          );
 
-        // Auto-accept if configured
-        if (_currentAdvertisingOptions?.securityMode ==
-            SecurityMode.autoAccept) {
-          await session.respondToHandshake(accept: true);
-        } else {
-          _connectionRequestController.add(request);
+          _activeSessions[peer.id] = session;
+
+          session.stateStream.listen((state) {
+            _peerStateController.add(
+              PeerConnectionStateUpdate(
+                peer: peer,
+                state: state,
+                sasPin: session.sasPin,
+              ),
+            );
+            if (state == PeerConnectionState.disconnected) {
+              _activeSessions.remove(peer.id);
+            }
+          });
+
+          // Feed HandshakeInit frame into session
+          await session.handleFrame(frame);
+
+          final request = ConnectionRequest(
+            peer: peer,
+            authenticationPin: session.sasPin ?? '0000',
+            metadata: metadata,
+            timestamp: DateTime.now(),
+          );
+
+          // Auto-accept if configured
+          if (_currentAdvertisingOptions?.securityMode ==
+              SecurityMode.autoAccept) {
+            await session.respondToHandshake(accept: true);
+          } else {
+            _connectionRequestController.add(request);
+          }
+        } catch (e) {
+          handshakeTimer.cancel();
+          cleanupPending();
+          await sub.cancel();
+          await transport.close();
+          onCleanup?.call();
         }
       } else {
         // Unexpected frame prior to handshakeInit; terminate connection
         handshakeTimer.cancel();
+        cleanupPending();
         await sub.cancel();
         await transport.close();
         onCleanup?.call();
       }
     }, onError: (_) {
       handshakeTimer.cancel();
+      cleanupPending();
       sub.cancel();
       transport.close();
       onCleanup?.call();
     }, onDone: () {
       handshakeTimer.cancel();
+      cleanupPending();
     });
   }
 

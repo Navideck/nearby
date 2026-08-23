@@ -69,6 +69,17 @@ void main() {
           peerId: receiverTransport.peerId,
           frame: frame,
           storageDirectory: tempDir,
+          transport: receiverTransport,
+        );
+      });
+
+      // Pipe senderTransport frames into senderPayloadManager (e.g. ACKs)
+      senderTransport.incomingFrames.listen((frame) {
+        senderPayloadManager.handleIncomingFrame(
+          peerId: senderTransport.peerId,
+          frame: frame,
+          storageDirectory: tempDir,
+          transport: senderTransport,
         );
       });
     });
@@ -212,6 +223,90 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(progressList.any((p) => p.status == PayloadStatus.canceled), isTrue);
+    });
+
+    test('Transfers file successfully with interleaved concurrent frames without hanging', () async {
+      final senderFile = File('${tempDir.path}/large_sender_test.bin');
+      final payloadData = Uint8List.fromList(List.generate(256 * 1024, (i) => (i * 7) % 256));
+      senderFile.writeAsBytesSync(payloadData);
+
+      final receivedCompleter = Completer<NearbyPayload>();
+      receiverPayloadManager.onPayloadReceived.listen((payload) {
+        if (!receivedCompleter.isCompleted) {
+          receivedCompleter.complete(payload);
+        }
+      });
+
+      final sendFuture = senderPayloadManager.sendFile(
+        transport: senderTransport,
+        payloadId: 5005,
+        file: senderFile,
+        customFileName: 'large_received_test.bin',
+        chunkSize: 16 * 1024,
+      );
+
+      // Concurrently send separate frames while file transfer is in progress
+      unawaited(Future.microtask(() async {
+        for (int i = 0; i < 5; i++) {
+          await Future.delayed(const Duration(milliseconds: 15));
+          if (senderTransport.isConnected) {
+            await senderTransport.sendFrame(PacketFrame.heartbeat());
+          }
+        }
+      }));
+
+      await sendFuture;
+      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+
+      expect(received.type, equals(PayloadType.file));
+      expect(received.file, isNotNull);
+      expect(received.file!.existsSync(), isTrue);
+      expect(received.file!.lengthSync(), equals(256 * 1024));
+      expect(received.fileName, equals('large_received_test.bin'));
+    });
+
+    test('Transfers zero-byte byte payload and finalizes immediately with peerId populated', () async {
+      final receivedCompleter = Completer<NearbyPayload>();
+      receiverPayloadManager.onPayloadReceived.listen((payload) {
+        if (!receivedCompleter.isCompleted) {
+          receivedCompleter.complete(payload);
+        }
+      });
+
+      await senderPayloadManager.sendBytes(
+        transport: senderTransport,
+        payloadId: 6006,
+        bytes: Uint8List(0),
+      );
+
+      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+      expect(received.type, equals(PayloadType.bytes));
+      expect(received.peerId, equals(receiverTransport.peerId));
+      expect(received.bytes, isNotNull);
+      expect(received.bytes!.isEmpty, isTrue);
+    });
+
+    test('Rejects non-positive chunk sizes with ArgumentError', () async {
+      expect(
+        () => senderPayloadManager.sendBytes(
+          transport: senderTransport,
+          payloadId: 7001,
+          bytes: Uint8List(10),
+          chunkSize: 0,
+        ),
+        throwsArgumentError,
+      );
+
+      final testFile = File('${tempDir.path}/test_chunk.bin')..writeAsBytesSync([1, 2, 3]);
+      expect(
+        () => senderPayloadManager.sendFile(
+          transport: senderTransport,
+          payloadId: 7002,
+          file: testFile,
+          chunkSize: -10,
+        ),
+        throwsArgumentError,
+      );
     });
   });
 }

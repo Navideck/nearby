@@ -11,6 +11,7 @@ class DiscoveryCoordinator {
   final BleDiscoveryService _ble = BleDiscoveryService();
 
   final Map<String, Peer> _discoveredPeers = {};
+  final Map<String, Set<DiscoveryMedium>> _peerActiveMediums = {};
   Timer? _pruneTimer;
 
   StreamSubscription<Peer>? _bonsoirFoundSub;
@@ -58,6 +59,7 @@ class DiscoveryCoordinator {
       await _ble.startAdvertising(
         peerId: peerId,
         displayName: displayName,
+        serviceId: options.serviceId,
         metadata: options.metadata,
       );
     }
@@ -77,6 +79,7 @@ class DiscoveryCoordinator {
   }) async {
     await stopDiscovery();
     _discoveredPeers.clear();
+    _peerActiveMediums.clear();
     _peersController.add([]);
 
     final strategy = options.strategy;
@@ -88,7 +91,7 @@ class DiscoveryCoordinator {
       });
 
       _bonsoirLostSub = _bonsoir.onPeerLost.listen((peerId) {
-        _handlePeerLost(peerId);
+        _handlePeerMediumLost(peerId, DiscoveryMedium.mdns);
       });
 
       await _bonsoir.startBrowsing(serviceType: options.serviceId);
@@ -101,25 +104,29 @@ class DiscoveryCoordinator {
       });
 
       _bleLostSub = _ble.onPeerLost.listen((peerId) {
-        _handlePeerLost(peerId);
+        _handlePeerMediumLost(peerId, DiscoveryMedium.ble);
       });
 
-      await _ble.startScanning();
+      await _ble.startScanning(serviceId: options.serviceId);
     }
 
-    // Periodically prune stale peers
+    // Periodically prune stale BLE-only peers that timed out
     _pruneTimer = Timer.periodic(pruneInterval, (_) {
       final now = DateTime.now();
       final expiredPeerIds = <String>[];
 
       for (final entry in _discoveredPeers.entries) {
-        if (now.difference(entry.value.lastSeen) > peerTimeout) {
+        final mediums = _peerActiveMediums[entry.key] ?? {};
+        // Only prune peers whose active medium contains BLE and timed out
+        if (mediums.contains(DiscoveryMedium.ble) &&
+            !mediums.contains(DiscoveryMedium.mdns) &&
+            now.difference(entry.value.lastSeen) > peerTimeout) {
           expiredPeerIds.add(entry.key);
         }
       }
 
       for (final id in expiredPeerIds) {
-        _handlePeerLost(id);
+        _handlePeerMediumLost(id, DiscoveryMedium.ble);
       }
     });
   }
@@ -134,18 +141,18 @@ class DiscoveryCoordinator {
       }
     }
 
-    final existing = _discoveredPeers[incoming.id];
-    Peer updated;
+    final mediums = _peerActiveMediums.putIfAbsent(incoming.id, () => <DiscoveryMedium>{});
+    mediums.add(incoming.discoveredVia);
 
+    final existing = _discoveredPeers[incoming.id];
+    final mergedMedium = mediums.length > 1 ? DiscoveryMedium.hybrid : incoming.discoveredVia;
+
+    Peer updated;
     if (existing == null) {
-      updated = incoming;
+      updated = incoming.copyWith(discoveredVia: mergedMedium);
       _discoveredPeers[incoming.id] = updated;
       _peerDiscoveredController.add(updated);
     } else {
-      // Merge peer information (e.g. Upgrade to hybrid if seen across both BLE & mDNS)
-      final isDifferentMedium = existing.discoveredVia != incoming.discoveredVia;
-      final mergedMedium = isDifferentMedium ? DiscoveryMedium.hybrid : incoming.discoveredVia;
-
       updated = existing.copyWith(
         displayName: incoming.displayName.isNotEmpty ? incoming.displayName : existing.displayName,
         metadata: {...existing.metadata, ...incoming.metadata},
@@ -163,7 +170,27 @@ class DiscoveryCoordinator {
     _peersController.add(_discoveredPeers.values.toList());
   }
 
-  void _handlePeerLost(String peerId) {
+  void _handlePeerMediumLost(String peerId, DiscoveryMedium lostMedium) {
+    final mediums = _peerActiveMediums[peerId];
+    if (mediums != null) {
+      mediums.remove(lostMedium);
+
+      if (mediums.isNotEmpty) {
+        // Downgrade hybrid peer to remaining medium
+        final remainingMedium = mediums.first;
+        final existing = _discoveredPeers[peerId];
+        if (existing != null) {
+          _discoveredPeers[peerId] = existing.copyWith(
+            discoveredVia: remainingMedium,
+          );
+          _peersController.add(_discoveredPeers.values.toList());
+        }
+        return;
+      }
+    }
+
+    // No active mediums left; fully remove peer
+    _peerActiveMediums.remove(peerId);
     if (_discoveredPeers.remove(peerId) != null) {
       _peerLostController.add(peerId);
       _peersController.add(_discoveredPeers.values.toList());
@@ -194,6 +221,7 @@ class DiscoveryCoordinator {
     await stopAdvertising();
     await stopDiscovery();
     _discoveredPeers.clear();
+    _peerActiveMediums.clear();
     await _peerDiscoveredController.close();
     await _peerLostController.close();
     await _peersController.close();

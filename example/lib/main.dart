@@ -193,7 +193,11 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
   }
 
   Future<void> _requestPermissions() async {
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (Platform.isIOS) {
+      await [
+        Permission.bluetooth,
+      ].request();
+    } else if (Platform.isAndroid) {
       await [
         Permission.bluetoothScan,
         Permission.bluetoothAdvertise,

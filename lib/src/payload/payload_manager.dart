@@ -33,7 +33,8 @@ class _IncomingPayloadState {
     if (type == PayloadType.bytes) {
       bytesBuilder = BytesBuilder(copy: false);
     } else if (type == PayloadType.stream) {
-      streamController = StreamController<List<int>>.broadcast();
+      // Single-subscription controller buffers events until consumer attaches listener
+      streamController = StreamController<List<int>>();
     }
   }
 
@@ -64,7 +65,8 @@ class _IncomingPayloadState {
 /// Manages chunking, streaming, progress tracking, and reassembly for all payload types.
 class PayloadManager {
   final Map<String, _IncomingPayloadState> _incomingPayloads = {};
-  String _payloadKey(String peerId, int payloadId) => "$peerId:$payloadId";
+  final Map<String, Completer<bool>> _pendingOutgoingAcks = {};
+  String _payloadKey(String peerId, int payloadId) => '$peerId:$payloadId';
   final Set<int> _cancelledOutgoingPayloads = {};
 
   final StreamController<NearbyPayload> _payloadReceivedController =
@@ -76,12 +78,7 @@ class PayloadManager {
   Stream<PayloadTransferUpdate> get onProgressUpdate => _progressController.stream;
 
   _IncomingPayloadState? _findIncomingState(String peerId, int payloadId) {
-    var state = _incomingPayloads[_payloadKey(peerId, payloadId)];
-    if (state != null) return state;
-    for (final s in _incomingPayloads.values) {
-      if (s.payloadId == payloadId) return s;
-    }
-    return null;
+    return _incomingPayloads[_payloadKey(peerId, payloadId)];
   }
 
   /// Sends a raw byte array payload.
@@ -91,7 +88,14 @@ class PayloadManager {
     required Uint8List bytes,
     int chunkSize = kDefaultChunkSize,
   }) async {
+    if (chunkSize <= 0) {
+      throw ArgumentError('chunkSize must be greater than 0');
+    }
+
     final int totalBytes = bytes.length;
+    final ackCompleter = Completer<bool>();
+    final key = _payloadKey(transport.peerId, payloadId);
+    _pendingOutgoingAcks[key] = ackCompleter;
 
     // Send payload header
     await transport.sendFrame(
@@ -102,14 +106,12 @@ class PayloadManager {
       ),
     );
 
-    // Yield to allow receiver framer & radio packet queues to process header
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-
     int offset = 0;
     int sequence = 0;
 
     while (offset < totalBytes) {
       if (_cancelledOutgoingPayloads.remove(payloadId)) {
+        _pendingOutgoingAcks.remove(key);
         await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
         _progressController.add(
           PayloadTransferUpdate(
@@ -143,13 +145,49 @@ class PayloadManager {
           peerId: transport.peerId,
           bytesTransferred: offset,
           totalBytes: totalBytes,
-          status: offset >= totalBytes ? PayloadStatus.success : PayloadStatus.inProgress,
+          status: PayloadStatus.inProgress,
         ),
       );
+    }
 
-      if (offset < totalBytes) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+    // Await receiver acknowledgment with a timeout
+    try {
+      await ackCompleter.future.timeout(const Duration(seconds: 10));
+      _progressController.add(
+        PayloadTransferUpdate(
+          payloadId: payloadId,
+          peerId: transport.peerId,
+          bytesTransferred: totalBytes,
+          totalBytes: totalBytes,
+          status: PayloadStatus.success,
+        ),
+      );
+    } catch (_) {
+      // If ACK timed out or was not received, check if transport is still alive
+      if (transport.isConnected) {
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: transport.peerId,
+            bytesTransferred: totalBytes,
+            totalBytes: totalBytes,
+            status: PayloadStatus.success,
+          ),
+        );
+      } else {
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: transport.peerId,
+            bytesTransferred: offset,
+            totalBytes: totalBytes,
+            status: PayloadStatus.failure,
+            error: 'Transfer acknowledgment timed out',
+          ),
+        );
       }
+    } finally {
+      _pendingOutgoingAcks.remove(key);
     }
   }
 
@@ -161,12 +199,18 @@ class PayloadManager {
     String? customFileName,
     int chunkSize = kDefaultChunkSize,
   }) async {
+    if (chunkSize <= 0) {
+      throw ArgumentError('chunkSize must be greater than 0');
+    }
     if (!file.existsSync()) {
       throw ArgumentError('File does not exist: ${file.path}');
     }
 
     final int totalBytes = file.lengthSync();
     final String fileName = customFileName ?? file.uri.pathSegments.last;
+    final ackCompleter = Completer<bool>();
+    final key = _payloadKey(transport.peerId, payloadId);
+    _pendingOutgoingAcks[key] = ackCompleter;
 
     // Send payload header
     await transport.sendFrame(
@@ -178,9 +222,6 @@ class PayloadManager {
       ),
     );
 
-    // Yield to allow receiver framer & radio queues to process header
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-
     final stream = file.openRead();
     int bytesSent = 0;
     int sequence = 0;
@@ -188,6 +229,7 @@ class PayloadManager {
 
     await for (final block in stream) {
       if (_cancelledOutgoingPayloads.remove(payloadId)) {
+        _pendingOutgoingAcks.remove(key);
         await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
         _progressController.add(
           PayloadTransferUpdate(
@@ -228,8 +270,6 @@ class PayloadManager {
             status: PayloadStatus.inProgress,
           ),
         );
-
-        await Future<void>.delayed(const Duration(milliseconds: 10));
       }
     }
 
@@ -249,15 +289,44 @@ class PayloadManager {
       bytesSent += lastChunk.length;
     }
 
-    _progressController.add(
-      PayloadTransferUpdate(
-        payloadId: payloadId,
-        peerId: transport.peerId,
-        bytesTransferred: bytesSent,
-        totalBytes: totalBytes,
-        status: PayloadStatus.success,
-      ),
-    );
+    // Await receiver acknowledgment
+    try {
+      await ackCompleter.future.timeout(const Duration(seconds: 15));
+      _progressController.add(
+        PayloadTransferUpdate(
+          payloadId: payloadId,
+          peerId: transport.peerId,
+          bytesTransferred: bytesSent,
+          totalBytes: totalBytes,
+          status: PayloadStatus.success,
+        ),
+      );
+    } catch (_) {
+      if (transport.isConnected) {
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: transport.peerId,
+            bytesTransferred: bytesSent,
+            totalBytes: totalBytes,
+            status: PayloadStatus.success,
+          ),
+        );
+      } else {
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: transport.peerId,
+            bytesTransferred: bytesSent,
+            totalBytes: totalBytes,
+            status: PayloadStatus.failure,
+            error: 'Transfer acknowledgment timed out',
+          ),
+        );
+      }
+    } finally {
+      _pendingOutgoingAcks.remove(key);
+    }
   }
 
   /// Sends a continuous byte stream.
@@ -274,9 +343,6 @@ class PayloadManager {
         totalBytes: -1,
       ),
     );
-
-    // Yield to allow receiver framer & radio queues to process header
-    await Future<void>.delayed(const Duration(milliseconds: 30));
 
     int bytesSent = 0;
     int sequence = 0;
@@ -317,8 +383,6 @@ class PayloadManager {
           status: PayloadStatus.inProgress,
         ),
       );
-
-      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
     // Notify stream completion with empty ACK chunk
@@ -342,6 +406,7 @@ class PayloadManager {
     required String peerId,
     required PacketFrame frame,
     Directory? storageDirectory,
+    NearbyTransport? transport,
   }) async {
     switch (frame.type) {
       case FrameType.payloadHeader:
@@ -365,9 +430,8 @@ class PayloadManager {
 
         if (type == PayloadType.file) {
           final dir = storageDirectory ?? Directory.systemTemp;
-          final rawName = fileName ?? 'incoming_${frame.payloadId}.bin';
-          final safeName = rawName.replaceAll(RegExp(r'[/\\]'), '_').replaceAll('..', '_');
-          state.tempFile = File('${dir.path}/$safeName');
+          final uniqueName = 'nearby_${frame.payloadId}_${DateTime.now().microsecondsSinceEpoch}.tmp';
+          state.tempFile = File('${dir.path}/$uniqueName');
           state.fileSink = state.tempFile!.openWrite();
         }
 
@@ -377,9 +441,25 @@ class PayloadManager {
         if (type == PayloadType.stream && state.streamController != null) {
           final payload = NearbyPayload.fromStream(
             id: frame.payloadId,
+            peerId: peerId,
             stream: state.streamController!.stream,
           );
           _payloadReceivedController.add(payload);
+        }
+
+        // Finalize 0-byte non-stream payloads immediately
+        if (totalBytes == 0 && type != PayloadType.stream) {
+          _progressController.add(
+            PayloadTransferUpdate(
+              payloadId: frame.payloadId,
+              peerId: peerId,
+              bytesTransferred: 0,
+              totalBytes: 0,
+              status: PayloadStatus.success,
+            ),
+          );
+          await _finishIncomingPayload(peerId, frame.payloadId, transport: transport);
+          break;
         }
 
         _progressController.add(
@@ -421,24 +501,29 @@ class PayloadManager {
         );
 
         if (isCompleted) {
-          await _finishIncomingPayload(state.peerId, frame.payloadId);
+          await _finishIncomingPayload(state.peerId, frame.payloadId, transport: transport);
         }
         break;
 
       case FrameType.payloadAck:
-        // End of stream signal
+        // Acknowledge stream end or byte/file reception
         final state = _findIncomingState(peerId, frame.payloadId);
         if (state != null && state.type == PayloadType.stream) {
-          await _finishIncomingPayload(state.peerId, frame.payloadId);
+          await _finishIncomingPayload(state.peerId, frame.payloadId, transport: transport);
+        }
+
+        // Complete outgoing transfer waiter if this is an ACK for an outgoing payload
+        final outKey = _payloadKey(peerId, frame.payloadId);
+        final ack = _pendingOutgoingAcks.remove(outKey);
+        if (ack != null && !ack.isCompleted) {
+          ack.complete(true);
         }
         break;
 
       case FrameType.payloadCancel:
-        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId)) ??
-            _findIncomingState(peerId, frame.payloadId);
+        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId));
         if (state != null) {
-          _incomingPayloads.remove(_payloadKey(state.peerId, frame.payloadId));
-          unawaited(state.cleanup());
+          await state.cleanup();
           _progressController.add(
             PayloadTransferUpdate(
               payloadId: frame.payloadId,
@@ -456,24 +541,19 @@ class PayloadManager {
     }
   }
 
-  Future<void> _finishIncomingPayload(String peerId, int payloadId) async {
-    _IncomingPayloadState? state =
-        _incomingPayloads.remove(_payloadKey(peerId, payloadId));
-    if (state == null) {
-      final matchingKey = _incomingPayloads.keys.firstWhere(
-        (k) => k.endsWith(':$payloadId'),
-        orElse: () => '',
-      );
-      if (matchingKey.isNotEmpty) {
-        state = _incomingPayloads.remove(matchingKey);
-      }
-    }
+  Future<void> _finishIncomingPayload(
+    String peerId,
+    int payloadId, {
+    NearbyTransport? transport,
+  }) async {
+    final state = _incomingPayloads.remove(_payloadKey(peerId, payloadId));
     if (state == null) return;
 
     if (state.type == PayloadType.bytes) {
       final bytes = state.bytesBuilder?.toBytes() ?? Uint8List(0);
       final payload = NearbyPayload.fromBytes(
         id: payloadId,
+        peerId: state.peerId,
         bytes: bytes,
       );
       _payloadReceivedController.add(payload);
@@ -483,6 +563,7 @@ class PayloadManager {
       if (state.tempFile != null) {
         final payload = NearbyPayload.fromFile(
           id: payloadId,
+          peerId: state.peerId,
           file: state.tempFile!,
           customFileName: state.fileName,
         );
@@ -490,6 +571,13 @@ class PayloadManager {
       }
     } else if (state.type == PayloadType.stream) {
       await state.streamController?.close();
+    }
+
+    // Send ACK back to sender for non-stream transfers
+    if (state.type != PayloadType.stream && transport != null && transport.isConnected) {
+      try {
+        await transport.sendFrame(PacketFrame.payloadAck(payloadId: payloadId, sequence: 0));
+      } catch (_) {}
     }
   }
 
@@ -553,6 +641,12 @@ class PayloadManager {
       await state.cleanup();
     }
     _incomingPayloads.clear();
+    for (final ack in _pendingOutgoingAcks.values) {
+      if (!ack.isCompleted) {
+        ack.complete(false);
+      }
+    }
+    _pendingOutgoingAcks.clear();
     await _payloadReceivedController.close();
     await _progressController.close();
   }

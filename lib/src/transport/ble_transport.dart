@@ -69,10 +69,15 @@ class BleTransport implements NearbyTransport {
     // Give Bluetooth controller time to transition from scanning to connecting mode
     await Future.delayed(const Duration(milliseconds: 200));
 
-    // 2. Connect with retry and stale handle cleanup
+    // 2. Connect with overall deadline retry and stale handle cleanup
+    final deadline = DateTime.now().add(timeout);
     int attempts = 0;
     while (true) {
       attempts++;
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw TimeoutException('BLE connect timed out after $timeout', timeout);
+      }
       try {
         // Disconnect first to ensure stale native GATT client is cleared
         try {
@@ -80,17 +85,18 @@ class BleTransport implements NearbyTransport {
         } catch (_) {}
         await Future.delayed(const Duration(milliseconds: 100));
 
-        await UniversalBle.connect(deviceId).timeout(
-          timeout > const Duration(seconds: 8)
-              ? const Duration(seconds: 8)
-              : timeout,
-        );
+        final connectRemaining = deadline.difference(DateTime.now());
+        if (connectRemaining <= Duration.zero) {
+          throw TimeoutException('BLE connect timed out after $timeout', timeout);
+        }
+
+        await UniversalBle.connect(deviceId).timeout(connectRemaining);
         break;
       } catch (e) {
-        if (attempts >= 3) {
+        if (attempts >= 3 || deadline.difference(DateTime.now()) <= Duration.zero) {
           rethrow;
         }
-        await Future.delayed(Duration(milliseconds: 350 * attempts));
+        await Future.delayed(Duration(milliseconds: 200 * attempts));
       }
     }
 
@@ -136,6 +142,14 @@ class BleTransport implements NearbyTransport {
     }
   }
 
+  Future<void> _writeQueue = Future.value();
+
+  Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
+    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
+    _writeQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   @override
   String get peerId => _peerId;
 
@@ -166,31 +180,45 @@ class BleTransport implements NearbyTransport {
   }
 
   @override
-  Future<void> sendRaw(Uint8List data) async {
-    if (_closed) {
-      throw StateError('Cannot send raw data on closed BLE transport');
-    }
-
-    // Chunk the data according to BLE MTU size
-    int offset = 0;
-    while (offset < data.length) {
-      final int chunkSize =
-          (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
-      final Uint8List chunk = data.sublist(offset, offset + chunkSize);
-
-      await UniversalBle.write(
-        _deviceId,
-        kNearbyBleServiceUuid,
-        kNearbyBleTxCharUuid,
-        chunk,
-        withoutResponse: false,
-      );
-
-      offset += chunkSize;
-      if (offset < data.length) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+  Future<void> sendRaw(Uint8List data) {
+    return _synchronizedWrite(() async {
+      if (_closed) {
+        throw StateError('Cannot send raw data on closed BLE transport');
       }
-    }
+
+      // Chunk the data according to BLE MTU size
+      int offset = 0;
+      while (offset < data.length) {
+        if (_closed) break;
+        final int chunkSize =
+            (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
+        final Uint8List chunk = data.sublist(offset, offset + chunkSize);
+
+        int attempts = 0;
+        bool sent = false;
+        while (!sent && attempts < 8 && !_closed) {
+          attempts++;
+          try {
+            await UniversalBle.write(
+              _deviceId,
+              kNearbyBleServiceUuid,
+              kNearbyBleTxCharUuid,
+              chunk,
+              withoutResponse: false,
+            );
+            sent = true;
+          } catch (e) {
+            if (attempts >= 8) rethrow;
+            await Future<void>.delayed(Duration(milliseconds: 15 * attempts));
+          }
+        }
+
+        offset += chunkSize;
+        if (offset < data.length) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+    });
   }
 
   @override
@@ -264,6 +292,14 @@ class BlePeripheralTransport implements NearbyTransport {
     transport?._markClosed();
   }
 
+  Future<void> _writeQueue = Future.value();
+
+  Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
+    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
+    _writeQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   @override
   String get peerId => _peerId;
 
@@ -294,39 +330,43 @@ class BlePeripheralTransport implements NearbyTransport {
   }
 
   @override
-  Future<void> sendRaw(Uint8List data) async {
-    if (_closed) {
-      throw StateError('Cannot send raw data on closed BLE peripheral transport');
-    }
-
-    // Chunk data according to MTU size and notify subscribed central on RX characteristic
-    int offset = 0;
-    while (offset < data.length) {
-      final int chunkSize =
-          (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
-      final Uint8List chunk = data.sublist(offset, offset + chunkSize);
-
-      try {
-        await UniversalBlePeripheral.updateCharacteristicValue(
-          characteristicId: kNearbyBleRxCharUuid,
-          value: chunk,
-          deviceId: _deviceId,
-        );
-      } catch (_) {
-        // Fallback to notifying all subscribed centrals if deviceId mapping differs
-        try {
-          await UniversalBlePeripheral.updateCharacteristicValue(
-            characteristicId: kNearbyBleRxCharUuid,
-            value: chunk,
-          );
-        } catch (_) {}
+  Future<void> sendRaw(Uint8List data) {
+    return _synchronizedWrite(() async {
+      if (_closed) {
+        throw StateError('Cannot send raw data on closed BLE peripheral transport');
       }
 
-      offset += chunkSize;
-      if (offset < data.length) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      // Chunk data according to MTU size and notify subscribed central on RX characteristic
+      int offset = 0;
+      while (offset < data.length) {
+        if (_closed) break;
+        final int chunkSize =
+            (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
+        final Uint8List chunk = data.sublist(offset, offset + chunkSize);
+
+        int attempts = 0;
+        bool sent = false;
+        while (!sent && attempts < 8 && !_closed) {
+          attempts++;
+          try {
+            await UniversalBlePeripheral.updateCharacteristicValue(
+              characteristicId: kNearbyBleRxCharUuid,
+              value: chunk,
+              deviceId: _deviceId,
+            );
+            sent = true;
+          } catch (e) {
+            if (attempts >= 8) rethrow;
+            await Future<void>.delayed(Duration(milliseconds: 15 * attempts));
+          }
+        }
+
+        offset += chunkSize;
+        if (offset < data.length) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
       }
-    }
+    });
   }
 
   void _markClosed() {

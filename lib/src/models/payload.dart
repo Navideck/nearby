@@ -34,6 +34,9 @@ class NearbyPayload {
   /// Unique 64-bit integer ID for this payload.
   final int id;
 
+  /// The ID of the remote peer that sent this payload (populated on receive).
+  final String? peerId;
+
   /// Type of payload.
   final PayloadType type;
 
@@ -54,6 +57,7 @@ class NearbyPayload {
 
   NearbyPayload._({
     required this.id,
+    this.peerId,
     required this.type,
     this.bytes,
     this.file,
@@ -65,10 +69,12 @@ class NearbyPayload {
   /// Creates a payload containing a byte array.
   factory NearbyPayload.fromBytes({
     int? id,
+    String? peerId,
     required Uint8List bytes,
   }) {
     return NearbyPayload._(
       id: id ?? DateTime.now().microsecondsSinceEpoch,
+      peerId: peerId,
       type: PayloadType.bytes,
       bytes: bytes,
       totalBytes: bytes.length,
@@ -78,6 +84,7 @@ class NearbyPayload {
   /// Creates a payload for a local file on disk.
   factory NearbyPayload.fromFile({
     int? id,
+    String? peerId,
     required File file,
     String? customFileName,
   }) {
@@ -88,6 +95,7 @@ class NearbyPayload {
     );
     return NearbyPayload._(
       id: id ?? DateTime.now().microsecondsSinceEpoch,
+      peerId: peerId,
       type: PayloadType.file,
       file: file,
       fileName: name,
@@ -98,10 +106,12 @@ class NearbyPayload {
   /// Creates a payload for continuous byte streaming.
   factory NearbyPayload.fromStream({
     int? id,
+    String? peerId,
     required Stream<List<int>> stream,
   }) {
     return NearbyPayload._(
       id: id ?? DateTime.now().microsecondsSinceEpoch,
+      peerId: peerId,
       type: PayloadType.stream,
       stream: stream,
       totalBytes: -1, // Unknown/streaming
