@@ -619,8 +619,92 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 ),
               ],
             ),
+            if (_pendingConnections.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ..._pendingConnections.entries.map((entry) {
+                final peerId = entry.key;
+                final pin = entry.value;
+                final peer = _discoveredPeers.firstWhere(
+                  (p) => p.id == peerId,
+                  orElse: () => Peer(
+                    id: peerId,
+                    displayName: 'Remote Peer',
+                    discoveredVia: DiscoveryMedium.ble,
+                    lastSeen: DateTime.now(),
+                  ),
+                );
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1B4B),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF6366F1)),
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Color(0xFF10B981),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Connecting to ${peer.displayName}...',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              pin != null
+                                  ? 'Verify PIN: $pin on other device'
+                                  : 'Negotiating connection...',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: pin != null
+                                    ? const Color(0xFF10B981)
+                                    : Colors.grey,
+                                fontWeight: pin != null
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (pin != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF10B981)),
+                          ),
+                          child: Text(
+                            pin,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
+                              color: Color(0xFF10B981),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              }),
+            ],
             const SizedBox(height: 8),
-            if (_discoveredPeers.isEmpty)
+            if (_discoveredPeers.isEmpty && _pendingConnections.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24.0),
                 child: Center(
@@ -631,7 +715,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                   ),
                 ),
               )
-            else
+            else if (_discoveredPeers.isNotEmpty)
               ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),

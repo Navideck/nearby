@@ -187,18 +187,17 @@ class DiscoveryCoordinator {
 
     await _bonsoir.stopBrowsing();
     await _ble.stopScanning();
-    _discoveredPeers.clear();
-    _peersController.add([]);
   }
 
   /// Disposes coordinator resources.
   Future<void> dispose() async {
     await stopAdvertising();
     await stopDiscovery();
-    await _bonsoir.dispose();
-    await _ble.dispose();
-    await _peersController.close();
+    _discoveredPeers.clear();
     await _peerDiscoveredController.close();
     await _peerLostController.close();
+    await _peersController.close();
+    await _bonsoir.dispose();
+    await _ble.dispose();
   }
 }

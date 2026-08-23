@@ -198,10 +198,7 @@ class NearbyService {
         }
       }
     } else if (peer.bleDeviceId != null) {
-      // Pause discovery before BLE connect to avoid Android GATT Error 133
-      await stopDiscovery();
-
-      // Connect via BLE
+      // Connect via BLE (BleTransport internally stops BLE scanning to avoid GATT 133)
       transport = await BleTransport.connect(
         deviceId: peer.bleDeviceId!,
         peerId: peer.id,
