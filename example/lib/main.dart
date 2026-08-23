@@ -56,6 +56,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
   List<Peer> _discoveredPeers = [];
   final List<String> _chatMessages = [];
   final Map<int, PayloadTransferUpdate> _activeTransfers = {};
+  final Map<String, String?> _pendingConnections = {};
 
   StreamSubscription? _discoverySub;
   StreamSubscription? _requestSub;
@@ -103,8 +104,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
     _stateSub = _nearbyService.peerStateStream.listen((update) {
       if (mounted) {
         setState(() {
-          if (update.state == PeerConnectionState.connected && _selectedPeerId == null) {
-            _selectedPeerId = update.peer.id;
+          if (update.state == PeerConnectionState.authenticating) {
+            _pendingConnections[update.peer.id] = update.sasPin;
+          } else if (update.state == PeerConnectionState.connected) {
+            _pendingConnections.remove(update.peer.id);
+            _selectedPeerId ??= update.peer.id;
+          } else if (update.state == PeerConnectionState.disconnected) {
+            _pendingConnections.remove(update.peer.id);
+            if (_selectedPeerId == update.peer.id) {
+              final remaining = _nearbyService.connectedPeers;
+              _selectedPeerId = remaining.isNotEmpty ? remaining.first.id : null;
+            }
           }
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -299,6 +309,39 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _connectToPeer(Peer peer) async {
+    setState(() {
+      _pendingConnections[peer.id] = null;
+    });
+
+    try {
+      final success = await _nearbyService.requestConnection(peer);
+      if (!success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Connection to ${peer.displayName} was declined or timed out.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error connecting to ${peer.displayName}: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pendingConnections.remove(peer.id);
+        });
+      }
+    }
   }
 
   void _sendMessage() {
@@ -619,14 +662,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    trailing: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6366F1),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      ),
-                      onPressed: () => _nearbyService.requestConnection(peer),
-                      child: const Text('Connect', style: TextStyle(color: Colors.white)),
-                    ),
+                    trailing: _buildPeerTrailingAction(peer),
                   );
                 },
               ),
@@ -634,6 +670,118 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildPeerTrailingAction(Peer peer) {
+    final isPending = _pendingConnections.containsKey(peer.id);
+    if (!isPending) {
+      return ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF6366F1),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        ),
+        onPressed: () => _connectToPeer(peer),
+        child: const Text('Connect', style: TextStyle(color: Colors.white)),
+      );
+    }
+
+    final pin = _pendingConnections[peer.id];
+    if (pin != null) {
+      // Authenticating / Waiting for user to verify PIN on remote peer
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1B4B),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF6366F1)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF10B981),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'PIN: $pin',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF10B981),
+                fontSize: 13,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Initial connecting / negotiating handshake
+    return ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF374151),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      onPressed: null,
+      icon: const SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: Colors.white70,
+        ),
+      ),
+      label: const Text(
+        'Connecting...',
+        style: TextStyle(color: Colors.white70, fontSize: 13),
+      ),
+    );
+  }
+
+  Future<void> _disconnectPeer(Peer peer) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Disconnect Peer'),
+        content: Text('Are you sure you want to disconnect from ${peer.displayName}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Disconnect', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _nearbyService.disconnect(peer.id, reason: 'Disconnected by user');
+      if (mounted) {
+        setState(() {
+          if (_selectedPeerId == peer.id) {
+            final remaining =
+                _nearbyService.connectedPeers.where((p) => p.id != peer.id).toList();
+            _selectedPeerId = remaining.isNotEmpty ? remaining.first.id : null;
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Disconnected from ${peer.displayName}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildConnectedSessionCard(List<Peer> connectedPeers) {
@@ -644,22 +792,64 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Connected Peers',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Connected Peers',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                if (connectedPeers.length > 1)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    ),
+                    icon: const Icon(Icons.link_off, size: 16),
+                    label: const Text('Disconnect All', style: TextStyle(fontSize: 12)),
+                    onPressed: () async {
+                      await _nearbyService.disconnectAll(reason: 'Disconnected all peers');
+                      if (mounted) {
+                        setState(() {
+                          _selectedPeerId = null;
+                        });
+                      }
+                    },
+                  ),
+              ],
             ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: connectedPeers.map((p) {
                 final isSelected = p.id == _selectedPeerId;
-                return ChoiceChip(
-                  label: Text(p.displayName),
+                return InputChip(
+                  avatar: Icon(
+                    p.discoveredVia == DiscoveryMedium.mdns
+                        ? Icons.wifi
+                        : (p.discoveredVia == DiscoveryMedium.ble
+                            ? Icons.bluetooth
+                            : Icons.devices),
+                    size: 16,
+                    color: isSelected ? Colors.white : Colors.grey,
+                  ),
+                  label: Text(
+                    p.displayName,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.white70,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
                   selected: isSelected,
                   selectedColor: const Color(0xFF6366F1),
+                  backgroundColor: const Color(0xFF282A36),
                   onSelected: (selected) {
                     if (selected) setState(() => _selectedPeerId = p.id);
                   },
+                  deleteIcon: const Icon(Icons.close, size: 16, color: Colors.white70),
+                  deleteButtonTooltipMessage: 'Disconnect',
+                  onDeleted: () => _disconnectPeer(p),
                 );
               }).toList(),
             ),
