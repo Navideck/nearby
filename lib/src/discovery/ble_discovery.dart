@@ -5,7 +5,7 @@ import 'package:universal_ble/universal_ble.dart';
 import '../models/peer.dart';
 import '../transport/ble_transport.dart';
 
-/// Bluetooth Low Energy (BLE) discovery service using UniversalBle.
+/// Bluetooth Low Energy (BLE) discovery and GATT service host using UniversalBle.
 class BleDiscoveryService {
   final StreamController<Peer> _peerFoundController =
       StreamController<Peer>.broadcast();
@@ -85,7 +85,7 @@ class BleDiscoveryService {
     }
   }
 
-  /// Starts BLE peripheral advertising if supported by the platform.
+  /// Starts BLE peripheral advertising and sets up GATT server characteristics if supported.
   Future<void> startAdvertising({
     required String peerId,
     required String displayName,
@@ -103,9 +103,42 @@ class BleDiscoveryService {
     final Uint8List mfgData = Uint8List.fromList(utf8.encode(jsonEncode(payload)));
 
     try {
+      // Set up GATT Server service and characteristics
+      final service = BlePeripheralService(
+        uuid: kNearbyBleServiceUuid,
+        characteristics: [
+          BlePeripheralCharacteristic(
+            uuid: kNearbyBleTxCharUuid,
+            properties: [
+              CharacteristicProperty.write,
+              CharacteristicProperty.writeWithoutResponse,
+            ],
+            permissions: [
+              PeripheralAttributePermission.writeable,
+            ],
+          ),
+          BlePeripheralCharacteristic(
+            uuid: kNearbyBleRxCharUuid,
+            properties: [
+              CharacteristicProperty.notify,
+              CharacteristicProperty.read,
+            ],
+            permissions: [
+              PeripheralAttributePermission.readable,
+            ],
+          ),
+        ],
+      );
+
+      try {
+        await UniversalBlePeripheral.clearServices();
+        await UniversalBlePeripheral.addService(service);
+      } catch (_) {}
+
       // Peripheral advertising via universal_ble
       await UniversalBlePeripheral.startAdvertising(
         services: [kNearbyBleServiceUuid],
+        localName: displayName,
         manufacturerData: ManufacturerData(0xFFFF, mfgData),
       );
     } catch (_) {
@@ -119,6 +152,7 @@ class BleDiscoveryService {
       _isAdvertising = false;
       try {
         await UniversalBlePeripheral.stopAdvertising();
+        await UniversalBlePeripheral.clearServices();
       } catch (_) {}
     }
   }

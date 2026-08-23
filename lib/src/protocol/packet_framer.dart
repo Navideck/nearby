@@ -7,6 +7,8 @@ const int kMagicByte0 = 0x4E;
 const int kMagicByte1 = 0x42;
 const int kProtocolVersion = 1;
 const int kHeaderLength = 20; // 2 (magic) + 1 (version) + 1 (type) + 8 (payloadId) + 4 (sequence) + 4 (length)
+const int kMaxFrameBodyLength = 16 * 1024 * 1024; // 16 MB max frame body
+const int kMaxFramerBufferLength = 32 * 1024 * 1024; // 32 MB max buffer
 
 /// Frame types supported by the protocol.
 enum FrameType {
@@ -98,6 +100,9 @@ class PacketFrame {
     final int payloadId = byteData.getInt64(4, Endian.big);
     final int sequence = byteData.getUint32(12, Endian.big);
     final int bodyLength = byteData.getUint32(16, Endian.big);
+    if (bodyLength > kMaxFrameBodyLength) {
+      return null; // Reject oversized frame
+    }
 
     if (bytes.length < kHeaderLength + bodyLength + 4) {
       return null; // Incomplete packet
@@ -254,6 +259,9 @@ class PacketFramer {
 
   /// Adds a chunk of incoming raw bytes and processes all complete frames.
   void addBytes(List<int> chunk) {
+    if (_buffer.length + chunk.length > kMaxFramerBufferLength) {
+      _buffer.clear();
+    }
     _buffer.add(chunk);
     _processBuffer();
   }
@@ -273,6 +281,11 @@ class PacketFramer {
 
       final ByteData byteData = ByteData.sublistView(currentBytes, offset);
       final int bodyLength = byteData.getUint32(16, Endian.big);
+      if (bodyLength > kMaxFrameBodyLength) {
+        // Discard corrupted or oversized frame header
+        offset += 2;
+        continue;
+      }
       final int frameTotalLength = kHeaderLength + bodyLength + 4;
 
       if (offset + frameTotalLength > currentBytes.length) {

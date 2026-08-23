@@ -63,7 +63,8 @@ class _IncomingPayloadState {
 
 /// Manages chunking, streaming, progress tracking, and reassembly for all payload types.
 class PayloadManager {
-  final Map<int, _IncomingPayloadState> _incomingPayloads = {};
+  final Map<String, _IncomingPayloadState> _incomingPayloads = {};
+  String _payloadKey(String peerId, int payloadId) => "$peerId:$payloadId";
   final Set<int> _cancelledOutgoingPayloads = {};
 
   final StreamController<NearbyPayload> _payloadReceivedController =
@@ -348,7 +349,7 @@ class PayloadManager {
           state.fileSink = state.tempFile!.openWrite();
         }
 
-        _incomingPayloads[frame.payloadId] = state;
+        _incomingPayloads[_payloadKey(peerId, frame.payloadId)] = state;
 
         // If it is a stream payload, emit it immediately so consumer can start listening
         if (type == PayloadType.stream && state.streamController != null) {
@@ -371,7 +372,7 @@ class PayloadManager {
         break;
 
       case FrameType.payloadChunk:
-        final state = _incomingPayloads[frame.payloadId];
+        final state = _incomingPayloads[_payloadKey(peerId, frame.payloadId)];
         if (state == null) return;
 
         state.bytesReceived += frame.body.length;
@@ -398,20 +399,20 @@ class PayloadManager {
         );
 
         if (isCompleted) {
-          await _finishIncomingPayload(frame.payloadId);
+          await _finishIncomingPayload(peerId, frame.payloadId);
         }
         break;
 
       case FrameType.payloadAck:
         // End of stream signal
-        final state = _incomingPayloads[frame.payloadId];
+        final state = _incomingPayloads[_payloadKey(peerId, frame.payloadId)];
         if (state != null && state.type == PayloadType.stream) {
-          await _finishIncomingPayload(frame.payloadId);
+          await _finishIncomingPayload(peerId, frame.payloadId);
         }
         break;
 
       case FrameType.payloadCancel:
-        final state = _incomingPayloads.remove(frame.payloadId);
+        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId));
         if (state != null) {
           unawaited(state.cleanup());
           _progressController.add(
@@ -431,8 +432,8 @@ class PayloadManager {
     }
   }
 
-  Future<void> _finishIncomingPayload(int payloadId) async {
-    final state = _incomingPayloads.remove(payloadId);
+  Future<void> _finishIncomingPayload(String peerId, int payloadId) async {
+    final state = _incomingPayloads.remove(_payloadKey(peerId, payloadId));
     if (state == null) return;
 
     if (state.type == PayloadType.bytes) {
@@ -459,34 +460,56 @@ class PayloadManager {
   }
 
   /// Cancels an active incoming or outgoing payload transfer.
-  void cancelPayload(int payloadId) {
+  void cancelPayload(int payloadId, {String? peerId}) {
     _cancelledOutgoingPayloads.add(payloadId);
-    final incoming = _incomingPayloads.remove(payloadId);
-    if (incoming != null) {
-      unawaited(incoming.cleanup());
-      _progressController.add(
-        PayloadTransferUpdate(
-          payloadId: payloadId,
-          peerId: incoming.peerId,
-          bytesTransferred: incoming.bytesReceived,
-          totalBytes: incoming.totalBytes,
-          status: PayloadStatus.canceled,
-        ),
-      );
+    if (peerId != null) {
+      final incoming = _incomingPayloads.remove(_payloadKey(peerId, payloadId));
+      if (incoming != null) {
+        unawaited(incoming.cleanup());
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: incoming.peerId,
+            bytesTransferred: incoming.bytesReceived,
+            totalBytes: incoming.totalBytes,
+            status: PayloadStatus.canceled,
+          ),
+        );
+      }
+      return;
+    }
+
+    final matchingKeys = _incomingPayloads.keys
+        .where((k) => k.endsWith(':$payloadId'))
+        .toList();
+    for (final key in matchingKeys) {
+      final incoming = _incomingPayloads.remove(key);
+      if (incoming != null) {
+        unawaited(incoming.cleanup());
+        _progressController.add(
+          PayloadTransferUpdate(
+            payloadId: payloadId,
+            peerId: incoming.peerId,
+            bytesTransferred: incoming.bytesReceived,
+            totalBytes: incoming.totalBytes,
+            status: PayloadStatus.canceled,
+          ),
+        );
+      }
     }
   }
 
   /// Cleans up active transfers for a disconnected peer.
   void handlePeerDisconnected(String peerId) {
-    final toRemove = <int>[];
+    final toRemove = <String>[];
     for (final entry in _incomingPayloads.entries) {
       if (entry.value.peerId == peerId) {
         unawaited(entry.value.cleanup());
         toRemove.add(entry.key);
       }
     }
-    for (final id in toRemove) {
-      _incomingPayloads.remove(id);
+    for (final key in toRemove) {
+      _incomingPayloads.remove(key);
     }
   }
 

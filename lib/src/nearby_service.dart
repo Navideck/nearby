@@ -228,11 +228,23 @@ class NearbyService {
   }
 
   void _handleIncomingSocket(Socket socket) {
+    if (_activeSessions.length >= 32) {
+      socket.destroy();
+      return;
+    }
+
     final transport = TcpTransport.wrap(socket, peerId: 'pending');
 
     late StreamSubscription sub;
+    final handshakeTimer = Timer(const Duration(seconds: 15), () {
+      sub.cancel();
+      transport.close();
+      socket.destroy();
+    });
+
     sub = transport.incomingFrames.listen((frame) async {
       if (frame.type == FrameType.handshakeInit) {
+        handshakeTimer.cancel();
         await sub.cancel();
 
         // Extract remote peer info
@@ -296,7 +308,20 @@ class NearbyService {
         } else {
           _connectionRequestController.add(request);
         }
+      } else {
+        // Unexpected frame prior to handshakeInit; terminate connection
+        handshakeTimer.cancel();
+        await sub.cancel();
+        await transport.close();
+        socket.destroy();
       }
+    }, onError: (_) {
+      handshakeTimer.cancel();
+      sub.cancel();
+      transport.close();
+      socket.destroy();
+    }, onDone: () {
+      handshakeTimer.cancel();
     });
   }
 
