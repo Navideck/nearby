@@ -48,6 +48,9 @@ class Peer {
   /// Bluetooth peripheral/device ID (if discovered via BLE).
   final String? bleDeviceId;
 
+  /// Custom service UUID used for GATT connection (if discovered via BLE).
+  final String? serviceUuid;
+
   /// Signal strength (RSSI in dBm) if available.
   final int? rssi;
 
@@ -62,6 +65,7 @@ class Peer {
     this.ipAddress,
     this.port,
     this.bleDeviceId,
+    this.serviceUuid,
     this.rssi,
     required this.lastSeen,
   });
@@ -75,6 +79,7 @@ class Peer {
     String? ipAddress,
     int? port,
     String? bleDeviceId,
+    String? serviceUuid,
     int? rssi,
     DateTime? lastSeen,
   }) {
@@ -86,6 +91,7 @@ class Peer {
       ipAddress: ipAddress ?? this.ipAddress,
       port: port ?? this.port,
       bleDeviceId: bleDeviceId ?? this.bleDeviceId,
+      serviceUuid: serviceUuid ?? this.serviceUuid,
       rssi: rssi ?? this.rssi,
       lastSeen: lastSeen ?? this.lastSeen,
     );
@@ -101,6 +107,7 @@ class Peer {
       'ipAddress': ipAddress,
       'port': port,
       'bleDeviceId': bleDeviceId,
+      'serviceUuid': serviceUuid,
       'rssi': rssi,
       'lastSeen': lastSeen.toIso8601String(),
     };
@@ -122,6 +129,7 @@ class Peer {
       ipAddress: json['ipAddress'] as String?,
       port: json['port'] as int?,
       bleDeviceId: json['bleDeviceId'] as String?,
+      serviceUuid: json['serviceUuid'] as String?,
       rssi: json['rssi'] as int?,
       lastSeen: json['lastSeen'] != null
           ? DateTime.parse(json['lastSeen'] as String)

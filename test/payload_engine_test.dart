@@ -362,5 +362,45 @@ void main() {
 
       await peer2Transport.close();
     });
+
+    test('Rejects declared byte payload exceeding maxBytesPayloadSize', () async {
+      final customManager = PayloadManager(maxBytesPayloadSize: 1024);
+      final updates = <PayloadTransferUpdate>[];
+      customManager.onProgressUpdate.listen(updates.add);
+
+      await customManager.handleIncomingFrame(
+        peerId: 'peer_1',
+        frame: PacketFrame.payloadHeader(
+          payloadId: 1234,
+          payloadType: PayloadType.bytes.name,
+          totalBytes: 2048,
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(updates.any((u) => u.payloadId == 1234 && u.status == PayloadStatus.failure), isTrue);
+      await customManager.dispose();
+    });
+
+    test('Rejects declared file payload exceeding maxFilePayloadSize', () async {
+      final customManager = PayloadManager(maxFilePayloadSize: 1024 * 1024);
+      final updates = <PayloadTransferUpdate>[];
+      customManager.onProgressUpdate.listen(updates.add);
+
+      await customManager.handleIncomingFrame(
+        peerId: 'peer_1',
+        frame: PacketFrame.payloadHeader(
+          payloadId: 5678,
+          payloadType: PayloadType.file.name,
+          totalBytes: 50 * 1024 * 1024,
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(updates.any((u) => u.payloadId == 5678 && u.status == PayloadStatus.failure), isTrue);
+      await customManager.dispose();
+    });
   });
 }

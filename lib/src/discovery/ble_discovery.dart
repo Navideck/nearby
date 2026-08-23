@@ -100,6 +100,7 @@ class BleDiscoveryService {
         metadata: metadata,
         discoveredVia: DiscoveryMedium.ble,
         bleDeviceId: device.deviceId,
+        serviceUuid: targetUuid,
         rssi: device.rssi,
         lastSeen: DateTime.now(),
       );

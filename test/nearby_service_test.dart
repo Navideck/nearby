@@ -126,10 +126,15 @@ void main() {
       expect(sessionA.state, equals(PeerConnectionState.connected));
       expect(sessionB.state, equals(PeerConnectionState.connected));
 
-      // Both sides must have computed identical SAS PINs
+      // Both sides must have computed identical SAS PINs and session keys
       expect(sessionA.sasPin, isNotNull);
       expect(sessionB.sasPin, isNotNull);
       expect(sessionA.sasPin, equals(sessionB.sasPin));
+
+      expect(sessionA.sessionKey, isNotNull);
+      expect(sessionB.sessionKey, isNotNull);
+      expect(sessionA.sessionKey!.length, equals(32));
+      expect(sessionA.sessionKey, equals(sessionB.sessionKey));
     });
 
     test('Rejected handshake disconnects gracefully', () async {

@@ -160,6 +160,7 @@ class DiscoveryCoordinator {
         ipAddress: incoming.ipAddress ?? existing.ipAddress,
         port: incoming.port ?? existing.port,
         bleDeviceId: incoming.bleDeviceId ?? existing.bleDeviceId,
+        serviceUuid: incoming.serviceUuid ?? existing.serviceUuid,
         rssi: incoming.rssi ?? existing.rssi,
         lastSeen: DateTime.now(),
       );

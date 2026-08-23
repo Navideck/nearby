@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 
@@ -140,6 +142,22 @@ void main() {
     test('computeSha256 produces valid 64-character hex digest', () {
       final hash = SecurityManager.computeSha256([1, 2, 3, 4]);
       expect(hash.length, equals(64));
+    });
+
+    test('computeHmac and verifyHmac correctly authenticate messages', () {
+      final key = Uint8List.fromList(List.generate(32, (i) => i));
+      final message = utf8.encode('Sensitive control frame');
+      final hmac = SecurityManager.computeHmac(key, message);
+      expect(hmac.length, equals(32));
+
+      expect(SecurityManager.verifyHmac(key, message, hmac), isTrue);
+
+      final tampered = utf8.encode('Tampered control frame');
+      expect(SecurityManager.verifyHmac(key, tampered, hmac), isFalse);
+
+      final corruptedHmac = Uint8List.fromList(hmac);
+      corruptedHmac[0] ^= 0xFF;
+      expect(SecurityManager.verifyHmac(key, message, corruptedHmac), isFalse);
     });
   });
 }

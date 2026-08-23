@@ -43,8 +43,11 @@ class NearbySession {
     _init();
   }
 
+  Uint8List? _sessionKey;
+
   PeerConnectionState get state => _state;
   String? get sasPin => _sasPin;
+  Uint8List? get sessionKey => _sessionKey;
   Stream<PeerConnectionState> get stateStream => _stateController.stream;
 
   void _setState(PeerConnectionState newState) {
@@ -114,6 +117,18 @@ class NearbySession {
     );
 
     if (accept) {
+      if (_sharedSecret != null && _remoteToken != null) {
+        final transcript = SecurityManager.computeTranscriptDigest(
+          localPeerId: localPeerId,
+          localToken: _localToken,
+          remotePeerId: peer.id,
+          remoteToken: _remoteToken!,
+        );
+        _sessionKey = SecurityManager.deriveSessionKey(
+          sharedSecretHex: _sharedSecret!,
+          transcriptDigest: transcript,
+        );
+      }
       _setState(PeerConnectionState.connected);
       _startHeartbeat();
       if (!_handshakeCompleter.isCompleted) {
@@ -175,6 +190,16 @@ class NearbySession {
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
             sharedSecretHex: _sharedSecret,
+          );
+          final transcript = SecurityManager.computeTranscriptDigest(
+            localPeerId: localPeerId,
+            localToken: _localToken,
+            remotePeerId: remotePeerId,
+            remoteToken: _remoteToken!,
+          );
+          _sessionKey = SecurityManager.deriveSessionKey(
+            sharedSecretHex: _sharedSecret!,
+            transcriptDigest: transcript,
           );
           _setState(PeerConnectionState.connected);
           _startHeartbeat();

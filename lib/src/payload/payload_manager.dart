@@ -64,6 +64,12 @@ class _IncomingPayloadState {
 
 /// Manages chunking, streaming, progress tracking, and reassembly for all payload types.
 class PayloadManager {
+  /// Maximum allowed declared size for in-memory byte payloads (default: 32 MB).
+  final int maxBytesPayloadSize;
+
+  /// Maximum allowed declared size for file payloads (default: 2 GB).
+  final int maxFilePayloadSize;
+
   final Map<String, _IncomingPayloadState> _incomingPayloads = {};
   final Map<String, Completer<bool>> _pendingOutgoingAcks = {};
   String _payloadKey(String peerId, int payloadId) => '$peerId:$payloadId';
@@ -80,6 +86,11 @@ class PayloadManager {
       StreamController<NearbyPayload>.broadcast();
   final StreamController<PayloadTransferUpdate> _progressController =
       StreamController<PayloadTransferUpdate>.broadcast();
+
+  PayloadManager({
+    this.maxBytesPayloadSize = 32 * 1024 * 1024,
+    this.maxFilePayloadSize = 2 * 1024 * 1024 * 1024,
+  });
 
   Stream<NearbyPayload> get onPayloadReceived => _payloadReceivedController.stream;
   Stream<PayloadTransferUpdate> get onProgressUpdate => _progressController.stream;
@@ -427,6 +438,34 @@ class PayloadManager {
 
         if (totalBytes < 0 && type != PayloadType.stream) {
           // Reject invalid negative declared size
+          return;
+        }
+
+        if (type == PayloadType.bytes && totalBytes > maxBytesPayloadSize) {
+          _progressController.add(
+            PayloadTransferUpdate(
+              payloadId: frame.payloadId,
+              peerId: peerId,
+              bytesTransferred: 0,
+              totalBytes: totalBytes,
+              status: PayloadStatus.failure,
+              error: 'Declared payload size ($totalBytes bytes) exceeds maximum bytes limit ($maxBytesPayloadSize bytes)',
+            ),
+          );
+          return;
+        }
+
+        if (type == PayloadType.file && totalBytes > maxFilePayloadSize) {
+          _progressController.add(
+            PayloadTransferUpdate(
+              payloadId: frame.payloadId,
+              peerId: peerId,
+              bytesTransferred: 0,
+              totalBytes: totalBytes,
+              status: PayloadStatus.failure,
+              error: 'Declared file size ($totalBytes bytes) exceeds maximum file limit ($maxFilePayloadSize bytes)',
+            ),
+          );
           return;
         }
 

@@ -57,6 +57,7 @@ class NearbyService {
   bool _isDiscovering = false;
   int _pendingHandshakeCount = 0;
   AdvertisingOptions? _currentAdvertisingOptions;
+  DiscoveryOptions? _currentDiscoveryOptions;
 
   NearbyService({
     String? localPeerId,
@@ -165,6 +166,7 @@ class NearbyService {
     required DiscoveryOptions options,
   }) async {
     await stopDiscovery();
+    _currentDiscoveryOptions = options;
     try {
       await _discoveryCoordinator.startDiscovery(options: options);
       _isDiscovering = true;
@@ -177,6 +179,7 @@ class NearbyService {
   /// Stops discovering nearby peers.
   Future<void> stopDiscovery() async {
     _isDiscovering = false;
+    _currentDiscoveryOptions = null;
     await _discoveryCoordinator.stopDiscovery();
   }
 
@@ -190,9 +193,12 @@ class NearbyService {
   }) async {
     NearbyTransport transport;
 
-    final String? bleServiceUuid = _currentAdvertisingOptions?.serviceId != null
-        ? BleDiscoveryService.generateServiceUuid(_currentAdvertisingOptions!.serviceId)
-        : null;
+    final String? bleServiceUuid = peer.serviceUuid ??
+        (_currentDiscoveryOptions?.serviceId != null
+            ? BleDiscoveryService.generateServiceUuid(_currentDiscoveryOptions!.serviceId)
+            : (_currentAdvertisingOptions?.serviceId != null
+                ? BleDiscoveryService.generateServiceUuid(_currentAdvertisingOptions!.serviceId)
+                : null));
 
     // Attempt TCP connection first if peer has IP/Port
     if (peer.ipAddress != null && peer.port != null) {
@@ -401,9 +407,20 @@ class NearbyService {
           // Feed HandshakeInit frame into session
           await session.handleFrame(frame);
 
+          if (session.sasPin == null) {
+            // Key exchange failed or invalid token: reject handshake
+            await session.respondToHandshake(
+              accept: false,
+              reason: 'Authentication failed: invalid handshake key exchange',
+            );
+            await transport.close();
+            onCleanup?.call();
+            return;
+          }
+
           final request = ConnectionRequest(
             peer: peer,
-            authenticationPin: session.sasPin ?? '0000',
+            authenticationPin: session.sasPin!,
             metadata: metadata,
             timestamp: DateTime.now(),
           );

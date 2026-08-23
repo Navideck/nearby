@@ -150,6 +150,23 @@ class SecurityManager {
     return Uint8List.fromList(okm);
   }
 
+  /// Computes an HMAC-SHA256 message authentication tag.
+  static Uint8List computeHmac(Uint8List key, List<int> data) {
+    final hmac = Hmac(sha256, key);
+    return Uint8List.fromList(hmac.convert(data).bytes);
+  }
+
+  /// Verifies an HMAC-SHA256 message authentication tag in constant time.
+  static bool verifyHmac(Uint8List key, List<int> data, List<int> signature) {
+    final expected = computeHmac(key, data);
+    if (expected.length != signature.length) return false;
+    int diff = 0;
+    for (int i = 0; i < expected.length; i++) {
+      diff |= expected[i] ^ signature[i];
+    }
+    return diff == 0;
+  }
+
   /// Computes a verification hash for a payload chunk or full byte sequence.
   static String computeSha256(List<int> data) {
     return sha256.convert(data).toString();
