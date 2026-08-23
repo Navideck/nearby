@@ -44,6 +44,7 @@ class BonsoirDiscoveryService {
     );
 
     _broadcast = BonsoirBroadcast(service: service);
+    await _broadcast!.initialize();
     await _broadcast!.start();
   }
 
@@ -66,6 +67,7 @@ class BonsoirDiscoveryService {
         : '_$serviceType._tcp';
 
     _discovery = BonsoirDiscovery(type: formattedType);
+    await _discovery!.initialize();
 
     _discoverySubscription = _discovery!.eventStream?.listen(
       (event) {
