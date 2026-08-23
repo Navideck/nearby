@@ -67,7 +67,14 @@ class PayloadManager {
   final Map<String, _IncomingPayloadState> _incomingPayloads = {};
   final Map<String, Completer<bool>> _pendingOutgoingAcks = {};
   String _payloadKey(String peerId, int payloadId) => '$peerId:$payloadId';
-  final Set<int> _cancelledOutgoingPayloads = {};
+  final Set<String> _cancelledOutgoingPayloads = {};
+
+  String _cancelKey(String? peerId, int payloadId) =>
+      peerId != null ? '$peerId:$payloadId' : '*:$payloadId';
+
+  bool _isCancelled(String peerId, int payloadId) =>
+      _cancelledOutgoingPayloads.remove(_cancelKey(peerId, payloadId)) ||
+      _cancelledOutgoingPayloads.remove(_cancelKey(null, payloadId));
 
   final StreamController<NearbyPayload> _payloadReceivedController =
       StreamController<NearbyPayload>.broadcast();
@@ -110,7 +117,7 @@ class PayloadManager {
     int sequence = 0;
 
     while (offset < totalBytes) {
-      if (_cancelledOutgoingPayloads.remove(payloadId)) {
+      if (_isCancelled(transport.peerId, payloadId)) {
         _pendingOutgoingAcks.remove(key);
         await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
         _progressController.add(
@@ -228,7 +235,7 @@ class PayloadManager {
     final BytesBuilder buffer = BytesBuilder(copy: false);
 
     await for (final block in stream) {
-      if (_cancelledOutgoingPayloads.remove(payloadId)) {
+      if (_isCancelled(transport.peerId, payloadId)) {
         _pendingOutgoingAcks.remove(key);
         await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
         _progressController.add(
@@ -348,7 +355,7 @@ class PayloadManager {
     int sequence = 0;
 
     await for (final block in stream) {
-      if (_cancelledOutgoingPayloads.remove(payloadId)) {
+      if (_isCancelled(transport.peerId, payloadId)) {
         await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
         _progressController.add(
           PayloadTransferUpdate(
@@ -385,10 +392,8 @@ class PayloadManager {
       );
     }
 
-    // Notify stream completion with empty ACK chunk
-    await transport.sendFrame(
-      PacketFrame.payloadAck(payloadId: payloadId, sequence: sequence),
-    );
+    // Stream finished; send payloadAck
+    await transport.sendFrame(PacketFrame.payloadAck(payloadId: payloadId));
 
     _progressController.add(
       PayloadTransferUpdate(
@@ -401,7 +406,7 @@ class PayloadManager {
     );
   }
 
-  /// Handles incoming packet frames from any connected transport.
+  /// Handles incoming packet frames related to payloads.
   Future<void> handleIncomingFrame({
     required String peerId,
     required PacketFrame frame,
@@ -419,6 +424,11 @@ class PayloadManager {
           (t) => t.name == typeStr,
           orElse: () => PayloadType.bytes,
         );
+
+        if (totalBytes < 0 && type != PayloadType.stream) {
+          // Reject invalid negative declared size
+          return;
+        }
 
         final state = _IncomingPayloadState(
           payloadId: frame.payloadId,
@@ -477,6 +487,26 @@ class PayloadManager {
         final state = _findIncomingState(peerId, frame.payloadId);
         if (state == null) return;
 
+        // Check if receiving this chunk exceeds the declared totalBytes
+        if (state.type != PayloadType.stream) {
+          if (state.bytesReceived + frame.body.length > state.totalBytes) {
+            // Reject oversized chunk and clean up
+            _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId));
+            await state.cleanup();
+            _progressController.add(
+              PayloadTransferUpdate(
+                payloadId: frame.payloadId,
+                peerId: state.peerId,
+                bytesTransferred: state.bytesReceived,
+                totalBytes: state.totalBytes,
+                status: PayloadStatus.failure,
+                error: 'Payload chunk exceeded declared totalBytes',
+              ),
+            );
+            return;
+          }
+        }
+
         state.bytesReceived += frame.body.length;
 
         if (state.type == PayloadType.bytes) {
@@ -488,7 +518,7 @@ class PayloadManager {
         }
 
         final isCompleted =
-            state.totalBytes > 0 && state.bytesReceived >= state.totalBytes;
+            state.totalBytes > 0 && state.bytesReceived == state.totalBytes;
 
         _progressController.add(
           PayloadTransferUpdate(
@@ -553,17 +583,17 @@ class PayloadManager {
       final bytes = state.bytesBuilder?.toBytes() ?? Uint8List(0);
       final payload = NearbyPayload.fromBytes(
         id: payloadId,
-        peerId: state.peerId,
+        peerId: peerId,
         bytes: bytes,
       );
       _payloadReceivedController.add(payload);
     } else if (state.type == PayloadType.file) {
       await state.fileSink?.flush();
       await state.fileSink?.close();
-      if (state.tempFile != null) {
+      if (state.tempFile != null && state.tempFile!.existsSync()) {
         final payload = NearbyPayload.fromFile(
           id: payloadId,
-          peerId: state.peerId,
+          peerId: peerId,
           file: state.tempFile!,
           customFileName: state.fileName,
         );
@@ -576,14 +606,14 @@ class PayloadManager {
     // Send ACK back to sender for non-stream transfers
     if (state.type != PayloadType.stream && transport != null && transport.isConnected) {
       try {
-        await transport.sendFrame(PacketFrame.payloadAck(payloadId: payloadId, sequence: 0));
+        await transport.sendFrame(PacketFrame.payloadAck(payloadId: payloadId));
       } catch (_) {}
     }
   }
 
   /// Cancels an active incoming or outgoing payload transfer.
   void cancelPayload(int payloadId, {String? peerId}) {
-    _cancelledOutgoingPayloads.add(payloadId);
+    _cancelledOutgoingPayloads.add(_cancelKey(peerId, payloadId));
     if (peerId != null) {
       final incoming = _incomingPayloads.remove(_payloadKey(peerId, payloadId));
       if (incoming != null) {

@@ -220,7 +220,7 @@ class PacketFrame {
   /// Creates a payload ack frame.
   factory PacketFrame.payloadAck({
     required int payloadId,
-    required int sequence,
+    int sequence = 0,
   }) {
     return PacketFrame(
       type: FrameType.payloadAck,

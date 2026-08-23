@@ -308,5 +308,59 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('Rejects oversized payload chunks and fails gracefully', () async {
+      final progressList = <PayloadTransferUpdate>[];
+      receiverPayloadManager.onProgressUpdate.listen(progressList.add);
+
+      // Declare a 10-byte payload
+      await receiverPayloadManager.handleIncomingFrame(
+        peerId: receiverTransport.peerId,
+        frame: PacketFrame.payloadHeader(
+          payloadId: 8001,
+          payloadType: PayloadType.bytes.name,
+          totalBytes: 10,
+        ),
+      );
+
+      // Send a 20-byte chunk exceeding declared 10 bytes
+      await receiverPayloadManager.handleIncomingFrame(
+        peerId: receiverTransport.peerId,
+        frame: PacketFrame.payloadChunk(
+          payloadId: 8001,
+          sequence: 0,
+          chunkData: Uint8List(20),
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(progressList.any((p) => p.status == PayloadStatus.failure), isTrue);
+    });
+
+    test('Cancels outgoing payload scoped strictly to target peer', () async {
+      final peer2Transport = MockLoopbackTransport(peerId: 'other_peer');
+      final updates = <PayloadTransferUpdate>[];
+      senderPayloadManager.onProgressUpdate.listen(updates.add);
+
+      senderPayloadManager.cancelPayload(9001, peerId: 'receiver_peer');
+
+      // Transfer to receiver_peer will be cancelled
+      await senderPayloadManager.sendBytes(
+        transport: senderTransport,
+        payloadId: 9001,
+        bytes: Uint8List(100),
+        chunkSize: 10,
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        updates.any((u) => u.payloadId == 9001 && u.peerId == 'receiver_peer' && u.status == PayloadStatus.canceled),
+        isTrue,
+      );
+
+      await peer2Transport.close();
+    });
   });
 }

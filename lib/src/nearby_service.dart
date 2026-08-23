@@ -332,6 +332,30 @@ class NearbyService {
             transport.updatePeerId(remotePeerId);
           }
 
+          // Check for existing active session with identical peer ID
+          if (_activeSessions.containsKey(remotePeerId)) {
+            final existingSession = _activeSessions[remotePeerId];
+            if (existingSession != null &&
+                existingSession.state != PeerConnectionState.disconnected) {
+              // Reject duplicate connection request to prevent unmanaged orphaned sessions
+              await transport.sendFrame(
+                PacketFrame.handshakeAck(
+                  accepted: false,
+                  peerId: localPeerId,
+                  displayName: localDisplayName,
+                  token: '',
+                  reason: 'Duplicate active session exists for peer $remotePeerId',
+                ),
+              );
+              await transport.close();
+              onCleanup?.call();
+              return;
+            } else {
+              await existingSession?.disconnect();
+              _activeSessions.remove(remotePeerId);
+            }
+          }
+
           final peer = Peer(
             id: remotePeerId,
             displayName: remoteDisplayName,
@@ -414,29 +438,38 @@ class NearbyService {
   /// Accepts an incoming connection request from a peer.
   Future<void> acceptConnection(String peerId) async {
     final session = _activeSessions[peerId];
-    if (session != null) {
-      await session.respondToHandshake(accept: true);
+    if (session == null) {
+      throw StateError('No pending connection request for peer $peerId');
     }
+    await session.respondToHandshake(accept: true);
   }
 
   /// Rejects an incoming connection request from a peer.
-  Future<void> rejectConnection(String peerId, {String? reason}) async {
+  Future<void> rejectConnection(
+    String peerId, {
+    String reason = 'Connection rejected by user',
+  }) async {
+    final session = _activeSessions[peerId];
+    if (session == null) {
+      throw StateError('No pending connection request for peer $peerId');
+    }
+    await session.respondToHandshake(accept: false, reason: reason);
+  }
+
+  /// Disconnects an active session with a peer.
+  Future<void> disconnectPeer(String peerId, {String? reason}) async {
     final session = _activeSessions[peerId];
     if (session != null) {
-      await session.respondToHandshake(accept: false, reason: reason);
+      await session.disconnect(reason: reason);
       _activeSessions.remove(peerId);
     }
   }
 
-  /// Disconnects from a connected peer.
-  Future<void> disconnect(String peerId, {String? reason}) async {
-    final session = _activeSessions.remove(peerId);
-    if (session != null) {
-      await session.disconnect(reason: reason);
-    }
-  }
+  /// Alias for [disconnectPeer].
+  Future<void> disconnect(String peerId, {String? reason}) =>
+      disconnectPeer(peerId, reason: reason);
 
-  /// Disconnects from all connected peers.
+  /// Disconnects all active peer sessions.
   Future<void> disconnectAll({String? reason}) async {
     final sessions = _activeSessions.values.toList();
     _activeSessions.clear();
@@ -445,10 +478,14 @@ class NearbyService {
     }
   }
 
-  // --- Data Transmission ---
+  // --- Payload Transmission ---
 
   /// Sends a raw byte array payload to a specific connected peer.
-  Future<void> sendBytes(String peerId, Uint8List bytes, {int? payloadId}) async {
+  Future<void> sendBytes(
+    String peerId,
+    Uint8List bytes, {
+    int? payloadId,
+  }) async {
     final session = _activeSessions[peerId];
     if (session == null) {
       throw StateError('Peer $peerId is not connected');
@@ -456,27 +493,18 @@ class NearbyService {
     await session.sendBytes(bytes, payloadId: payloadId);
   }
 
-  /// Broadcasts a raw byte array to all currently connected peers.
-  Future<void> sendBytesToAll(Uint8List bytes) async {
-    for (final session in _activeSessions.values) {
-      if (session.state == PeerConnectionState.connected) {
-        await session.sendBytes(bytes);
-      }
-    }
-  }
-
-  /// Sends a file to a specific connected peer.
+  /// Sends a local file payload to a specific connected peer.
   Future<void> sendFile(
     String peerId,
     File file, {
-    int? payloadId,
     String? customFileName,
+    int? payloadId,
   }) async {
     final session = _activeSessions[peerId];
     if (session == null) {
       throw StateError('Peer $peerId is not connected');
     }
-    await session.sendFile(file, payloadId: payloadId, customFileName: customFileName);
+    await session.sendFile(file, customFileName: customFileName, payloadId: payloadId);
   }
 
   /// Sends a continuous byte stream to a specific connected peer.
@@ -493,8 +521,8 @@ class NearbyService {
   }
 
   /// Cancels an in-progress payload transfer.
-  void cancelPayload(int payloadId) {
-    _payloadManager.cancelPayload(payloadId);
+  void cancelPayload(int payloadId, {String? peerId}) {
+    _payloadManager.cancelPayload(payloadId, peerId: peerId);
   }
 
   /// Disposes and shuts down all services, servers, and sessions.

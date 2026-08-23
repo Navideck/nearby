@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 import '../models/peer.dart';
@@ -55,6 +56,7 @@ class BleDiscoveryService {
       if (!hasService && !hasMfg) return;
 
       String? peerId;
+      String? advertisedSid;
       Map<String, String> metadata = const {};
       final mfgList = device.manufacturerDataList;
       if (mfgList.isNotEmpty) {
@@ -65,6 +67,7 @@ class BleDiscoveryService {
               if (decoded.startsWith('{')) {
                 final map = jsonDecode(decoded) as Map<String, dynamic>;
                 peerId = map['id']?.toString();
+                advertisedSid = map['sid']?.toString();
                 if (map['meta'] is Map) {
                   metadata = (map['meta'] as Map).map(
                     (k, v) => MapEntry(k.toString(), v.toString()),
@@ -78,6 +81,11 @@ class BleDiscoveryService {
             } catch (_) {}
           }
         }
+      }
+
+      // Enforce serviceId filtering if configured
+      if (serviceId != null && advertisedSid != null && advertisedSid != serviceId) {
+        return;
       }
 
       peerId ??= device.deviceId;
@@ -126,8 +134,9 @@ class BleDiscoveryService {
     if (serviceId == 'nearby-default' || serviceId.isEmpty) {
       return kNearbyBleServiceUuid;
     }
-    // Return standard service UUID to maintain BLE peripheral compatibility while encoding serviceId in advertisement
-    return kNearbyBleServiceUuid;
+    final digest = sha256.convert(utf8.encode(serviceId)).bytes;
+    final hex = digest.take(16).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}'.toLowerCase();
   }
 
   /// Starts BLE peripheral advertising and sets up GATT server characteristics.
@@ -146,9 +155,10 @@ class BleDiscoveryService {
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
 
-    // Encode peer ID and metadata into manufacturer payload
+    // Encode peer ID, service ID, and metadata into manufacturer payload
     final payloadMap = {
       'id': peerId,
+      'sid': ?serviceId,
       if (metadata.isNotEmpty) 'meta': metadata,
     };
     final String jsonStr = jsonEncode(payloadMap);

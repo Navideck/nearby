@@ -28,10 +28,9 @@ class SecurityManager {
     'C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F'
     '83655D23DCA3AD961C62F356208552BB9ED529077096966D'
     '670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B'
-    'E39E772C180E86039B2783A2EC07A28F2045E09E616142DE'
-    '2A8D5244E137D2BF8A606A6F752C89871780447384A74F9A'
-    '25273C044673A0B5676747A13C68DF749F8DF608B07D3E2F'
-    'DE8592EE',
+    'E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9'
+    'DE2BCBF6955817183995497CEA956AE515D2261898FA0510'
+    '15728E5A8AACAA68FFFFFFFFFFFFFFFF',
     radix: 16,
   );
 
@@ -58,17 +57,12 @@ class SecurityManager {
     required BigInt privateKey,
     required String remotePublicKeyHex,
   }) {
-    try {
-      final remotePub = BigInt.parse(remotePublicKeyHex, radix: 16);
-      if (remotePub <= BigInt.one || remotePub >= dhPrime - BigInt.one) {
-        throw ArgumentError('Invalid remote public key');
-      }
-      final sharedSecret = remotePub.modPow(privateKey, dhPrime);
-      return sharedSecret.toRadixString(16);
-    } catch (_) {
-      // Fallback digest if remote key was a raw token
-      return sha256.convert(utf8.encode(remotePublicKeyHex)).toString();
+    final remotePub = BigInt.parse(remotePublicKeyHex, radix: 16);
+    if (remotePub <= BigInt.one || remotePub >= dhPrime - BigInt.one) {
+      throw ArgumentError('Invalid remote public key');
     }
+    final sharedSecret = remotePub.modPow(privateKey, dhPrime);
+    return sharedSecret.toRadixString(16);
   }
 
   /// Computes a canonical authenticated transcript digest from the key exchange and metadata.
