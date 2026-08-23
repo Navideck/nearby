@@ -36,7 +36,7 @@ class PeerConnectionStateUpdate {
 class NearbyService {
   final String localPeerId;
   final String localDisplayName;
-  final Directory? storageDirectory;
+  Directory? storageDirectory;
 
   final DiscoveryCoordinator _discoveryCoordinator = DiscoveryCoordinator();
   final PayloadManager _payloadManager = PayloadManager();

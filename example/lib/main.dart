@@ -73,14 +73,13 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
   void initState() {
     super.initState();
     _initNearbyService();
+    _initStorageDir();
     _requestPermissions();
   }
 
-  Future<void> _initNearbyService() async {
-    _documentsDir = await getApplicationDocumentsDirectory();
+  void _initNearbyService() {
     _nearbyService = NearbyService(
       localDisplayName: 'Flutter Device ${DateTime.now().millisecond}',
-      storageDirectory: _documentsDir,
     );
     _nameController.text = _nearbyService.localDisplayName;
 
@@ -167,6 +166,20 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
         });
       }
     });
+  }
+
+  Future<void> _initStorageDir() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      if (mounted) {
+        setState(() {
+          _documentsDir = dir;
+          _nearbyService.storageDirectory = dir;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to get application documents directory: $e');
+    }
   }
 
   Future<void> _requestPermissions() async {
@@ -423,60 +436,54 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<DiscoveryStrategy>(
-                    initialValue: _selectedStrategy,
-                    decoration: const InputDecoration(
-                      labelText: 'Discovery Medium',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: DiscoveryStrategy.hybrid,
-                        child: Text('Hybrid (mDNS + BLE)'),
-                      ),
-                      DropdownMenuItem(
-                        value: DiscoveryStrategy.mdnsOnly,
-                        child: Text('mDNS Only (LAN)'),
-                      ),
-                      DropdownMenuItem(
-                        value: DiscoveryStrategy.bleOnly,
-                        child: Text('BLE Only'),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) setState(() => _selectedStrategy = val);
-                    },
-                  ),
+            DropdownButtonFormField<DiscoveryStrategy>(
+              initialValue: _selectedStrategy,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Discovery Medium',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: DiscoveryStrategy.hybrid,
+                  child: Text('Hybrid (mDNS + BLE)', overflow: TextOverflow.ellipsis),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<SecurityMode>(
-                    initialValue: _securityMode,
-                    decoration: const InputDecoration(
-                      labelText: 'Security Handshake',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: SecurityMode.pinVerification,
-                        child: Text('PIN / SAS Verification'),
-                      ),
-                      DropdownMenuItem(
-                        value: SecurityMode.autoAccept,
-                        child: Text('Auto-Accept'),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) setState(() => _securityMode = val);
-                    },
-                  ),
+                DropdownMenuItem(
+                  value: DiscoveryStrategy.mdnsOnly,
+                  child: Text('mDNS Only (LAN / Wi-Fi)', overflow: TextOverflow.ellipsis),
+                ),
+                DropdownMenuItem(
+                  value: DiscoveryStrategy.bleOnly,
+                  child: Text('BLE Only', overflow: TextOverflow.ellipsis),
                 ),
               ],
+              onChanged: (val) {
+                if (val != null) setState(() => _selectedStrategy = val);
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<SecurityMode>(
+              initialValue: _securityMode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Security Handshake',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: SecurityMode.pinVerification,
+                  child: Text('PIN / SAS Verification (Recommended)', overflow: TextOverflow.ellipsis),
+                ),
+                DropdownMenuItem(
+                  value: SecurityMode.autoAccept,
+                  child: Text('Auto-Accept (Insecure)', overflow: TextOverflow.ellipsis),
+                ),
+              ],
+              onChanged: (val) {
+                if (val != null) setState(() => _securityMode = val);
+              },
             ),
             const SizedBox(height: 16),
             Row(
@@ -487,17 +494,21 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       backgroundColor: _nearbyService.isAdvertising
                           ? Colors.redAccent
                           : const Color(0xFF6366F1),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     ),
                     icon: Icon(
                       _nearbyService.isAdvertising
                           ? Icons.stop
                           : Icons.cell_tower,
                       color: Colors.white,
+                      size: 20,
                     ),
-                    label: Text(
-                      _nearbyService.isAdvertising ? 'Stop Advertising' : 'Start Advertising',
-                      style: const TextStyle(color: Colors.white),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _nearbyService.isAdvertising ? 'Stop Advertising' : 'Start Advertising',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     onPressed: _toggleAdvertising,
                   ),
@@ -509,15 +520,19 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       backgroundColor: _nearbyService.isDiscovering
                           ? Colors.orangeAccent
                           : const Color(0xFF10B981),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     ),
                     icon: Icon(
                       _nearbyService.isDiscovering ? Icons.stop : Icons.radar,
                       color: Colors.white,
+                      size: 20,
                     ),
-                    label: Text(
-                      _nearbyService.isDiscovering ? 'Stop Discovery' : 'Start Discovery',
-                      style: const TextStyle(color: Colors.white),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _nearbyService.isDiscovering ? 'Stop Discovery' : 'Start Discovery',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     onPressed: _toggleDiscovery,
                   ),
@@ -539,15 +554,25 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Discovered Nearby Peers',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                const Expanded(
+                  child: Text(
+                    'Discovered Nearby Peers',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                Chip(
-                  label: Text('${_discoveredPeers.length} Found'),
-                  backgroundColor: const Color(0xFF282A36),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF282A36),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_discoveredPeers.length} Found',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             ),
@@ -587,14 +612,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                     title: Text(
                       peer.displayName,
                       style: const TextStyle(fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      'Via: ${peer.discoveredVia.name.toUpperCase()} | IP: ${peer.ipAddress ?? "BLE"}',
+                      'Via: ${peer.discoveredVia.name.toUpperCase()}${peer.ipAddress != null ? ' | IP: ${peer.ipAddress}' : ''}',
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     trailing: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF6366F1),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
                       onPressed: () => _nearbyService.requestConnection(peer),
                       child: const Text('Connect', style: TextStyle(color: Colors.white)),
@@ -666,8 +694,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Payload #${u.payloadId} (${u.status.name})'),
-                          Text('${u.percentage}% (${u.bytesTransferred}/${u.totalBytes} B)'),
+                          Expanded(
+                            child: Text(
+                              'Payload #${u.payloadId} (${u.status.name})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${u.percentage}% (${u.bytesTransferred}/${u.totalBytes} B)',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -688,19 +725,32 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    icon: const Icon(Icons.upload_file),
-                    label: const Text('Send 256KB File'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                    ),
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('Send 256KB File'),
+                    ),
                     onPressed: _sendSampleFile,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                    ),
                     icon: Icon(
                       _activeSensorStream != null ? Icons.stop : Icons.sensors,
                       color: _activeSensorStream != null ? Colors.redAccent : Colors.white,
+                      size: 18,
                     ),
-                    label: Text(_activeSensorStream != null ? 'Stop Stream' : 'Live Stream'),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(_activeSensorStream != null ? 'Stop Stream' : 'Live Stream'),
+                    ),
                     onPressed: _toggleLiveStream,
                   ),
                 ),

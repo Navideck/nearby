@@ -1,0 +1,36 @@
+PODS:
+  - bonsoir_darwin (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+  - nearby (0.0.1):
+    - FlutterMacOS
+  - universal_ble (0.0.1):
+    - Flutter
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - bonsoir_darwin (from `Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - nearby (from `Flutter/ephemeral/.symlinks/plugins/nearby/macos`)
+  - universal_ble (from `Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin`)
+
+EXTERNAL SOURCES:
+  bonsoir_darwin:
+    :path: Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  nearby:
+    :path: Flutter/ephemeral/.symlinks/plugins/nearby/macos
+  universal_ble:
+    :path: Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin
+
+SPEC CHECKSUMS:
+  bonsoir_darwin: 14bd7429acb51db6a8e51f6574ac3b1ea0037a87
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+  nearby: b99c1418175e94b4163a739e2bb2bcc475efbbe4
+  universal_ble: a322ebabee64f0ec27a313e89a5dd6967f37a60f
+
+PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
+
+COCOAPODS: 1.16.2
