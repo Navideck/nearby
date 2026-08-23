@@ -4,6 +4,16 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Used to discover and communicate with nearby devices.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Used to advertise this device to nearby peers.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Used to discover and connect to nearby peers over Wi-Fi and local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nearby-demo._tcp</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

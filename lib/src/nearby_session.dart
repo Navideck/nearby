@@ -1,0 +1,278 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'models/peer.dart';
+import 'payload/payload_manager.dart';
+import 'protocol/packet_framer.dart';
+import 'protocol/security_manager.dart';
+import 'transport/transport.dart';
+
+/// Manages active peer session, protocol handshakes, SAS verification, and data transport.
+class NearbySession {
+  final Peer peer;
+  final NearbyTransport transport;
+  final String localPeerId;
+  final String localDisplayName;
+  final PayloadManager payloadManager;
+  final Directory? storageDirectory;
+
+  final String _localToken = SecurityManager.generateHandshakeToken();
+  String? _remoteToken;
+  String? _sasPin;
+
+  PeerConnectionState _state = PeerConnectionState.connecting;
+  final Completer<bool> _handshakeCompleter = Completer<bool>();
+  final StreamController<PeerConnectionState> _stateController =
+      StreamController<PeerConnectionState>.broadcast();
+  StreamSubscription<PacketFrame>? _frameSubscription;
+  Timer? _heartbeatTimer;
+
+  NearbySession({
+    required this.peer,
+    required this.transport,
+    required this.localPeerId,
+    required this.localDisplayName,
+    required this.payloadManager,
+    this.storageDirectory,
+  }) {
+    _init();
+  }
+
+  PeerConnectionState get state => _state;
+  String? get sasPin => _sasPin;
+  Stream<PeerConnectionState> get stateStream => _stateController.stream;
+
+  void _setState(PeerConnectionState newState) {
+    if (_state != newState) {
+      _state = newState;
+      _stateController.add(_state);
+    }
+  }
+
+  void _init() {
+    _frameSubscription = transport.incomingFrames.listen(
+      (frame) async {
+        await handleFrame(frame);
+      },
+      onError: (error) {
+        disconnect(reason: 'Transport error: $error');
+      },
+      onDone: () {
+        disconnect(reason: 'Transport closed');
+      },
+      cancelOnError: false,
+    );
+  }
+
+  /// Initiates the handshake as the client/caller.
+  Future<bool> initiateHandshake({
+    Map<String, String> metadata = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    _setState(PeerConnectionState.connecting);
+
+    // Send HandshakeInit
+    await transport.sendFrame(
+      PacketFrame.handshakeInit(
+        peerId: localPeerId,
+        displayName: localDisplayName,
+        token: _localToken,
+        metadata: metadata,
+      ),
+    );
+
+    try {
+      return await _handshakeCompleter.future.timeout(timeout);
+    } catch (_) {
+      disconnect(reason: 'Handshake timeout');
+      return false;
+    }
+  }
+
+  /// Responds to an incoming HandshakeInit as the server/advertiser.
+  Future<void> respondToHandshake({
+    required bool accept,
+    String? reason,
+  }) async {
+    await transport.sendFrame(
+      PacketFrame.handshakeAck(
+        peerId: localPeerId,
+        displayName: localDisplayName,
+        token: _localToken,
+        accepted: accept,
+        reason: reason,
+      ),
+    );
+
+    if (accept) {
+      _setState(PeerConnectionState.connected);
+      _startHeartbeat();
+      if (!_handshakeCompleter.isCompleted) {
+        _handshakeCompleter.complete(true);
+      }
+    } else {
+      disconnect(reason: reason ?? 'Connection rejected');
+      if (!_handshakeCompleter.isCompleted) {
+        _handshakeCompleter.complete(false);
+      }
+    }
+  }
+
+  /// Processes an incoming frame from transport.
+  Future<void> handleFrame(PacketFrame frame) async {
+    switch (frame.type) {
+      case FrameType.handshakeInit:
+        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        _remoteToken = json['token'] as String?;
+        if (_remoteToken != null) {
+          _sasPin = SecurityManager.calculateSasPin(
+            localPeerId: localPeerId,
+            localToken: _localToken,
+            remotePeerId: peer.id,
+            remoteToken: _remoteToken!,
+          );
+        }
+        _setState(PeerConnectionState.authenticating);
+        break;
+
+      case FrameType.handshakeAck:
+        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final bool accepted = json['accepted'] == true;
+        _remoteToken = json['token'] as String?;
+
+        if (accepted && _remoteToken != null) {
+          _sasPin = SecurityManager.calculateSasPin(
+            localPeerId: localPeerId,
+            localToken: _localToken,
+            remotePeerId: peer.id,
+            remoteToken: _remoteToken!,
+          );
+          _setState(PeerConnectionState.connected);
+          _startHeartbeat();
+          if (!_handshakeCompleter.isCompleted) {
+            _handshakeCompleter.complete(true);
+          }
+        } else {
+          final reason = json['reason'] as String? ?? 'Rejected by peer';
+          disconnect(reason: reason);
+          if (!_handshakeCompleter.isCompleted) {
+            _handshakeCompleter.complete(false);
+          }
+        }
+        break;
+
+      case FrameType.handshakeReject:
+        disconnect(reason: 'Rejected by remote peer');
+        if (!_handshakeCompleter.isCompleted) {
+          _handshakeCompleter.complete(false);
+        }
+        break;
+
+      case FrameType.heartbeat:
+        // Keepalive pulse acknowledged
+        break;
+
+      case FrameType.disconnect:
+        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final reason = json['reason'] as String? ?? 'Peer disconnected';
+        disconnect(reason: reason, notifyRemote: false);
+        break;
+
+      case FrameType.payloadHeader:
+      case FrameType.payloadChunk:
+      case FrameType.payloadAck:
+      case FrameType.payloadCancel:
+        await payloadManager.handleIncomingFrame(
+          peerId: peer.id,
+          frame: frame,
+          storageDirectory: storageDirectory,
+        );
+        break;
+    }
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (_state == PeerConnectionState.connected && transport.isConnected) {
+        try {
+          await transport.sendFrame(PacketFrame.heartbeat());
+        } catch (_) {
+          disconnect(reason: 'Heartbeat send failed');
+        }
+      }
+    });
+  }
+
+  /// Sends a raw byte array payload.
+  Future<void> sendBytes(Uint8List bytes, {int? payloadId}) async {
+    if (_state != PeerConnectionState.connected) {
+      throw StateError('Cannot send data; peer is not connected');
+    }
+    final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
+    await payloadManager.sendBytes(
+      transport: transport,
+      payloadId: id,
+      bytes: bytes,
+    );
+  }
+
+  /// Sends a file.
+  Future<void> sendFile(File file, {int? payloadId, String? customFileName}) async {
+    if (_state != PeerConnectionState.connected) {
+      throw StateError('Cannot send data; peer is not connected');
+    }
+    final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
+    await payloadManager.sendFile(
+      transport: transport,
+      payloadId: id,
+      file: file,
+      customFileName: customFileName,
+    );
+  }
+
+  /// Sends a byte stream.
+  Future<void> sendStream(Stream<List<int>> stream, {int? payloadId}) async {
+    if (_state != PeerConnectionState.connected) {
+      throw StateError('Cannot send data; peer is not connected');
+    }
+    final id = payloadId ?? DateTime.now().microsecondsSinceEpoch;
+    await payloadManager.sendStream(
+      transport: transport,
+      payloadId: id,
+      stream: stream,
+    );
+  }
+
+  /// Disconnects this session.
+  Future<void> disconnect({String? reason, bool notifyRemote = true}) async {
+    if (_state == PeerConnectionState.disconnected) return;
+    _setState(PeerConnectionState.disconnected);
+
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+
+    if (notifyRemote && transport.isConnected) {
+      try {
+        await transport.sendFrame(PacketFrame.disconnect(reason: reason));
+      } catch (_) {}
+    }
+
+    await _frameSubscription?.cancel();
+    _frameSubscription = null;
+
+    payloadManager.handlePeerDisconnected(peer.id);
+    await transport.close();
+
+    if (!_handshakeCompleter.isCompleted) {
+      _handshakeCompleter.complete(false);
+    }
+  }
+
+  /// Disposes session resources.
+  Future<void> dispose() async {
+    await disconnect();
+    await _stateController.close();
+  }
+}
