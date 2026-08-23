@@ -17,17 +17,19 @@ class BleTransport implements NearbyTransport {
 
   final String _deviceId;
   String _peerId;
+  final String _serviceUuid;
   final PacketFramer _framer = PacketFramer();
   final Completer<void> _doneCompleter = Completer<void>();
   bool _closed = false;
   int _mtu = 240;
 
-  BleTransport._(this._deviceId, this._peerId) {
-    _ensureGlobalCallbacks();
+  BleTransport._(this._deviceId, this._peerId, [this._serviceUuid = kNearbyBleServiceUuid]) {
+    _ensureInitialized();
     _activeTransports[_deviceId.toLowerCase()] = this;
   }
 
-  static void _ensureGlobalCallbacks() {
+  /// Factory registration to handle incoming characteristic value changes for this device.
+  static void _ensureInitialized() {
     if (_callbacksInitialized) return;
     _callbacksInitialized = true;
 
@@ -37,9 +39,11 @@ class BleTransport implements NearbyTransport {
       Uint8List value,
       dynamic _,
     ) {
-      if (BleUuidParser.compareStrings(characteristicId, kNearbyBleRxCharUuid)) {
-        final transport = _activeTransports[deviceId.toLowerCase()];
-        transport?._framer.addBytes(value);
+      final transport = _activeTransports[deviceId.toLowerCase()];
+      if (transport != null && !transport._closed) {
+        if (BleUuidParser.compareStrings(characteristicId, kNearbyBleRxCharUuid)) {
+          transport._framer.addBytes(value);
+        }
       }
     };
 
@@ -49,7 +53,7 @@ class BleTransport implements NearbyTransport {
       String? error,
     ) {
       if (!isConnected) {
-        final transport = _activeTransports[deviceId.toLowerCase()];
+        final transport = _activeTransports.remove(deviceId.toLowerCase());
         transport?.close();
       }
     };
@@ -59,8 +63,11 @@ class BleTransport implements NearbyTransport {
   static Future<BleTransport> connect({
     required String deviceId,
     required String peerId,
+    String? serviceUuid,
     Duration timeout = const Duration(seconds: 15),
   }) async {
+    final targetServiceUuid = serviceUuid ?? kNearbyBleServiceUuid;
+
     // 1. Explicitly stop BLE scanning before connecting to prevent Android GATT error 133
     try {
       await UniversalBle.stopScan();
@@ -101,7 +108,7 @@ class BleTransport implements NearbyTransport {
     }
 
     // 3. Register active transport instance ONLY after connection is established
-    final transport = BleTransport._(deviceId, peerId);
+    final transport = BleTransport._(deviceId, peerId, targetServiceUuid);
 
     try {
       // Allow GATT connection link to stabilize across platforms
@@ -115,7 +122,7 @@ class BleTransport implements NearbyTransport {
       // Subscribe to RX characteristic notifications
       await UniversalBle.subscribeNotifications(
         deviceId,
-        kNearbyBleServiceUuid,
+        targetServiceUuid,
         kNearbyBleRxCharUuid,
       );
 
@@ -161,6 +168,9 @@ class BleTransport implements NearbyTransport {
   /// The underlying BLE peripheral device ID.
   String get deviceId => _deviceId;
 
+  /// The service UUID used for GATT communication.
+  String get serviceUuid => _serviceUuid;
+
   @override
   Stream<PacketFrame> get incomingFrames => _framer.frames;
 
@@ -201,7 +211,7 @@ class BleTransport implements NearbyTransport {
           try {
             await UniversalBle.write(
               _deviceId,
-              kNearbyBleServiceUuid,
+              _serviceUuid,
               kNearbyBleTxCharUuid,
               chunk,
               withoutResponse: false,

@@ -108,15 +108,33 @@ void main() {
       );
     });
 
-    test('deriveSessionKey produces 32-byte authenticated session key', () {
+    test('deriveSessionKey produces 32-byte authenticated session key from DH shared secret', () {
+      final aliceKeys = SecurityManager.generateKeyPair();
+      final bobKeys = SecurityManager.generateKeyPair();
+      final secret = SecurityManager.computeSharedSecret(
+        privateKey: aliceKeys.privateKey,
+        remotePublicKeyHex: bobKeys.publicKeyHex,
+      );
+
       final digest = SecurityManager.computeTranscriptDigest(
         localPeerId: 'p1',
-        localToken: 't1',
+        localToken: aliceKeys.publicKeyHex,
         remotePeerId: 'p2',
-        remoteToken: 't2',
+        remoteToken: bobKeys.publicKeyHex,
       );
-      final key = SecurityManager.deriveSessionKey(transcriptDigest: digest);
+      final key = SecurityManager.deriveSessionKey(
+        sharedSecretHex: secret,
+        transcriptDigest: digest,
+      );
       expect(key.length, equals(32));
+
+      expect(
+        () => SecurityManager.deriveSessionKey(
+          sharedSecretHex: '',
+          transcriptDigest: digest,
+        ),
+        throwsArgumentError,
+      );
     });
 
     test('computeSha256 produces valid 64-character hex digest', () {

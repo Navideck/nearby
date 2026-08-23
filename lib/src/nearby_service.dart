@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'discovery/ble_discovery.dart';
 import 'discovery/discovery_coordinator.dart';
 import 'models/connection_request.dart';
 import 'models/nearby_options.dart';
@@ -189,6 +190,10 @@ class NearbyService {
   }) async {
     NearbyTransport transport;
 
+    final String? bleServiceUuid = _currentAdvertisingOptions?.serviceId != null
+        ? BleDiscoveryService.generateServiceUuid(_currentAdvertisingOptions!.serviceId)
+        : null;
+
     // Attempt TCP connection first if peer has IP/Port
     if (peer.ipAddress != null && peer.port != null) {
       try {
@@ -204,6 +209,7 @@ class NearbyService {
           transport = await BleTransport.connect(
             deviceId: peer.bleDeviceId!,
             peerId: peer.id,
+            serviceUuid: bleServiceUuid,
             timeout: timeout,
           );
         } else {
@@ -215,6 +221,7 @@ class NearbyService {
       transport = await BleTransport.connect(
         deviceId: peer.bleDeviceId!,
         peerId: peer.id,
+        serviceUuid: bleServiceUuid,
         timeout: timeout,
       );
     } else {
@@ -491,6 +498,15 @@ class NearbyService {
       throw StateError('Peer $peerId is not connected');
     }
     await session.sendBytes(bytes, payloadId: payloadId);
+  }
+
+  /// Broadcasts a raw byte array payload to all currently connected peers.
+  Future<void> sendBytesToAll(Uint8List bytes) async {
+    for (final session in _activeSessions.values) {
+      if (session.state == PeerConnectionState.connected) {
+        await session.sendBytes(bytes);
+      }
+    }
   }
 
   /// Sends a local file payload to a specific connected peer.

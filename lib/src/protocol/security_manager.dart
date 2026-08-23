@@ -128,11 +128,14 @@ class SecurityManager {
 
   /// Derives an authenticated session key using HKDF-SHA256 from the shared secret and transcript digest.
   static Uint8List deriveSessionKey({
+    required String sharedSecretHex,
     required String transcriptDigest,
-    String? sharedSecretHex,
     String contextInfo = 'navideck-nearby-session-key',
   }) {
-    final ikm = utf8.encode(sharedSecretHex ?? transcriptDigest);
+    if (sharedSecretHex.isEmpty) {
+      throw ArgumentError('sharedSecretHex must not be empty');
+    }
+    final ikm = utf8.encode(sharedSecretHex);
     final salt = utf8.encode(transcriptDigest);
     final info = utf8.encode(contextInfo);
 
