@@ -12,6 +12,11 @@ class DiscoveryCoordinator {
   final Map<String, Peer> _discoveredPeers = {};
   Timer? _pruneTimer;
 
+  StreamSubscription<Peer>? _bonsoirFoundSub;
+  StreamSubscription<String>? _bonsoirLostSub;
+  StreamSubscription<Peer>? _bleFoundSub;
+  StreamSubscription<String>? _bleLostSub;
+
   final StreamController<List<Peer>> _peersController =
       StreamController<List<Peer>>.broadcast();
   final StreamController<Peer> _peerDiscoveredController =
@@ -73,11 +78,11 @@ class DiscoveryCoordinator {
 
     // Listen to mDNS discoveries
     if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.mdnsOnly) {
-      _bonsoir.onPeerFound.listen((peer) {
+      _bonsoirFoundSub = _bonsoir.onPeerFound.listen((peer) {
         _handlePeerFound(peer, options);
       });
 
-      _bonsoir.onPeerLost.listen((peerId) {
+      _bonsoirLostSub = _bonsoir.onPeerLost.listen((peerId) {
         _handlePeerLost(peerId);
       });
 
@@ -86,11 +91,11 @@ class DiscoveryCoordinator {
 
     // Listen to BLE discoveries
     if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.bleOnly) {
-      _ble.onPeerFound.listen((peer) {
+      _bleFoundSub = _ble.onPeerFound.listen((peer) {
         _handlePeerFound(peer, options);
       });
 
-      _ble.onPeerLost.listen((peerId) {
+      _bleLostSub = _ble.onPeerLost.listen((peerId) {
         _handlePeerLost(peerId);
       });
 
@@ -164,6 +169,17 @@ class DiscoveryCoordinator {
   Future<void> stopDiscovery() async {
     _pruneTimer?.cancel();
     _pruneTimer = null;
+
+    await _bonsoirFoundSub?.cancel();
+    _bonsoirFoundSub = null;
+    await _bonsoirLostSub?.cancel();
+    _bonsoirLostSub = null;
+
+    await _bleFoundSub?.cancel();
+    _bleFoundSub = null;
+    await _bleLostSub?.cancel();
+    _bleLostSub = null;
+
     await _bonsoir.stopBrowsing();
     await _ble.stopScanning();
     _discoveredPeers.clear();

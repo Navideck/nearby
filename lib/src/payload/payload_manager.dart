@@ -37,9 +37,22 @@ class _IncomingPayloadState {
     }
   }
 
-  void cleanup() {
-    fileSink?.close();
-    streamController?.close();
+  Future<void> cleanup() async {
+    final sink = fileSink;
+    fileSink = null;
+    if (sink != null) {
+      try {
+        await sink.flush();
+        await sink.close();
+      } catch (_) {}
+    }
+    final sc = streamController;
+    streamController = null;
+    if (sc != null && !sc.isClosed) {
+      try {
+        await sc.close();
+      } catch (_) {}
+    }
     if (tempFile != null && tempFile!.existsSync() && !completer.isCompleted) {
       try {
         tempFile!.deleteSync();
@@ -329,7 +342,8 @@ class PayloadManager {
 
         if (type == PayloadType.file) {
           final dir = storageDirectory ?? Directory.systemTemp;
-          final safeName = fileName ?? 'incoming_${frame.payloadId}.bin';
+          final rawName = fileName ?? 'incoming_${frame.payloadId}.bin';
+          final safeName = rawName.replaceAll(RegExp(r'[/\\]'), '_').replaceAll('..', '_');
           state.tempFile = File('${dir.path}/$safeName');
           state.fileSink = state.tempFile!.openWrite();
         }
@@ -399,7 +413,7 @@ class PayloadManager {
       case FrameType.payloadCancel:
         final state = _incomingPayloads.remove(frame.payloadId);
         if (state != null) {
-          state.cleanup();
+          unawaited(state.cleanup());
           _progressController.add(
             PayloadTransferUpdate(
               payloadId: frame.payloadId,
@@ -449,7 +463,7 @@ class PayloadManager {
     _cancelledOutgoingPayloads.add(payloadId);
     final incoming = _incomingPayloads.remove(payloadId);
     if (incoming != null) {
-      incoming.cleanup();
+      unawaited(incoming.cleanup());
       _progressController.add(
         PayloadTransferUpdate(
           payloadId: payloadId,
@@ -467,7 +481,7 @@ class PayloadManager {
     final toRemove = <int>[];
     for (final entry in _incomingPayloads.entries) {
       if (entry.value.peerId == peerId) {
-        entry.value.cleanup();
+        unawaited(entry.value.cleanup());
         toRemove.add(entry.key);
       }
     }
@@ -479,7 +493,7 @@ class PayloadManager {
   /// Disposes manager.
   Future<void> dispose() async {
     for (final state in _incomingPayloads.values) {
-      state.cleanup();
+      await state.cleanup();
     }
     _incomingPayloads.clear();
     await _payloadReceivedController.close();

@@ -45,7 +45,6 @@ class NearbyService {
   StreamSubscription<Socket>? _serverSubscription;
 
   final Map<String, NearbySession> _activeSessions = {};
-  final Map<String, Completer<bool>> _pendingConnectionRequests = {};
 
   final StreamController<ConnectionRequest> _connectionRequestController =
       StreamController<ConnectionRequest>.broadcast();
@@ -239,6 +238,7 @@ class NearbyService {
         // Extract remote peer info
         final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         final String remotePeerId = json['peerId'] as String;
+        transport.updatePeerId(remotePeerId);
         final String remoteDisplayName = json['displayName'] as String;
         final Map<String, String> metadata =
             (json['metadata'] as Map<dynamic, dynamic>?)?.map(
@@ -282,9 +282,6 @@ class NearbyService {
 
         // Feed HandshakeInit frame into session
         await session.handleFrame(frame);
-
-        final reqCompleter = Completer<bool>();
-        _pendingConnectionRequests[peer.id] = reqCompleter;
 
         final request = ConnectionRequest(
           peer: peer,

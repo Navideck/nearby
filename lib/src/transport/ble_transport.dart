@@ -11,6 +11,9 @@ const String kNearbyBleRxCharUuid = '0000fe22-0000-1000-8000-00805f9b34fb';
 
 /// BLE GATT Characteristic implementation of [NearbyTransport] for fallback connections.
 class BleTransport implements NearbyTransport {
+  static final Map<String, BleTransport> _activeTransports = {};
+  static bool _callbacksInitialized = false;
+
   final String _deviceId;
   final String _peerId;
   final PacketFramer _framer = PacketFramer();
@@ -19,16 +22,32 @@ class BleTransport implements NearbyTransport {
   int _mtu = 240;
 
   BleTransport._(this._deviceId, this._peerId) {
-    // Setup value notifications from UniversalBle
-    UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value, dynamic _) {
-      if (deviceId.toLowerCase() == _deviceId.toLowerCase()) {
-        _framer.addBytes(value);
-      }
+    _ensureGlobalCallbacks();
+    _activeTransports[_deviceId.toLowerCase()] = this;
+  }
+
+  static void _ensureGlobalCallbacks() {
+    if (_callbacksInitialized) return;
+    _callbacksInitialized = true;
+
+    UniversalBle.onValueChange = (
+      String deviceId,
+      String characteristicId,
+      Uint8List value,
+      dynamic _,
+    ) {
+      final transport = _activeTransports[deviceId.toLowerCase()];
+      transport?._framer.addBytes(value);
     };
 
-    UniversalBle.onConnectionChange = (String deviceId, bool isConnected, String? error) {
-      if (deviceId.toLowerCase() == _deviceId.toLowerCase() && !isConnected) {
-        close();
+    UniversalBle.onConnectionChange = (
+      String deviceId,
+      bool isConnected,
+      String? error,
+    ) {
+      if (!isConnected) {
+        final transport = _activeTransports[deviceId.toLowerCase()];
+        transport?.close();
       }
     };
   }
@@ -113,6 +132,8 @@ class BleTransport implements NearbyTransport {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+
+    _activeTransports.remove(_deviceId.toLowerCase());
 
     try {
       await UniversalBle.disconnect(_deviceId);

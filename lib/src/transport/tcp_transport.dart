@@ -7,7 +7,7 @@ import 'transport.dart';
 /// TCP Socket implementation of [NearbyTransport] for high-bandwidth LAN data transfer.
 class TcpTransport implements NearbyTransport {
   final Socket _socket;
-  final String _peerId;
+  String _peerId;
   final PacketFramer _framer = PacketFramer();
   final Completer<void> _doneCompleter = Completer<void>();
   bool _closed = false;
@@ -47,6 +47,11 @@ class TcpTransport implements NearbyTransport {
 
   @override
   String get peerId => _peerId;
+
+  /// Updates the peer ID associated with this transport after handshake.
+  void updatePeerId(String peerId) {
+    _peerId = peerId;
+  }
 
   @override
   Stream<PacketFrame> get incomingFrames => _framer.frames;

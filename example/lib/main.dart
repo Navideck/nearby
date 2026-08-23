@@ -359,7 +359,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
     _stateSub?.cancel();
     _payloadSub?.cancel();
     _progressSub?.cancel();
-    _nearbyService.dispose();
+    unawaited(_nearbyService.dispose());
     _nameController.dispose();
     _msgController.dispose();
     _chatScrollController.dispose();
