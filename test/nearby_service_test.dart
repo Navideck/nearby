@@ -189,4 +189,35 @@ void main() {
       expect(service.connectedPeers, isEmpty);
     });
   });
+
+  group('BlePeripheralTransport Tests', () {
+    test('Frames incoming writes from remote central and handles lifecycle', () async {
+      final deviceId = 'test_central_device_1';
+      final transport = BlePeripheralTransport.getOrCreate(deviceId);
+      expect(transport.isConnected, isTrue);
+
+      final receivedFrames = <PacketFrame>[];
+      final sub = transport.incomingFrames.listen(receivedFrames.add);
+
+      final frame = PacketFrame(
+        type: FrameType.heartbeat,
+        sequence: 1,
+        body: Uint8List.fromList([1, 2, 3]),
+      );
+
+      BlePeripheralTransport.handleIncomingWrite(deviceId, frame.toBytes());
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(receivedFrames.length, equals(1));
+      expect(receivedFrames.first.type, equals(FrameType.heartbeat));
+      expect(receivedFrames.first.sequence, equals(1));
+
+      BlePeripheralTransport.handleDisconnected(deviceId);
+      expect(transport.isConnected, isFalse);
+
+      await sub.cancel();
+      await transport.close();
+    });
+  });
 }
+

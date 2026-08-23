@@ -75,6 +75,15 @@ class PayloadManager {
   Stream<NearbyPayload> get onPayloadReceived => _payloadReceivedController.stream;
   Stream<PayloadTransferUpdate> get onProgressUpdate => _progressController.stream;
 
+  _IncomingPayloadState? _findIncomingState(String peerId, int payloadId) {
+    var state = _incomingPayloads[_payloadKey(peerId, payloadId)];
+    if (state != null) return state;
+    for (final s in _incomingPayloads.values) {
+      if (s.payloadId == payloadId) return s;
+    }
+    return null;
+  }
+
   /// Sends a raw byte array payload.
   Future<void> sendBytes({
     required NearbyTransport transport,
@@ -92,6 +101,9 @@ class PayloadManager {
         totalBytes: totalBytes,
       ),
     );
+
+    // Yield to allow receiver framer & radio packet queues to process header
+    await Future<void>.delayed(const Duration(milliseconds: 30));
 
     int offset = 0;
     int sequence = 0;
@@ -135,7 +147,9 @@ class PayloadManager {
         ),
       );
 
-      await Future<void>.delayed(Duration.zero);
+      if (offset < totalBytes) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
     }
   }
 
@@ -163,6 +177,9 @@ class PayloadManager {
         fileName: fileName,
       ),
     );
+
+    // Yield to allow receiver framer & radio queues to process header
+    await Future<void>.delayed(const Duration(milliseconds: 30));
 
     final stream = file.openRead();
     int bytesSent = 0;
@@ -212,7 +229,7 @@ class PayloadManager {
           ),
         );
 
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
       }
     }
 
@@ -258,6 +275,9 @@ class PayloadManager {
       ),
     );
 
+    // Yield to allow receiver framer & radio queues to process header
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
     int bytesSent = 0;
     int sequence = 0;
 
@@ -297,6 +317,8 @@ class PayloadManager {
           status: PayloadStatus.inProgress,
         ),
       );
+
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
     // Notify stream completion with empty ACK chunk
@@ -372,7 +394,7 @@ class PayloadManager {
         break;
 
       case FrameType.payloadChunk:
-        final state = _incomingPayloads[_payloadKey(peerId, frame.payloadId)];
+        final state = _findIncomingState(peerId, frame.payloadId);
         if (state == null) return;
 
         state.bytesReceived += frame.body.length;
@@ -391,7 +413,7 @@ class PayloadManager {
         _progressController.add(
           PayloadTransferUpdate(
             payloadId: frame.payloadId,
-            peerId: peerId,
+            peerId: state.peerId,
             bytesTransferred: state.bytesReceived,
             totalBytes: state.totalBytes,
             status: isCompleted ? PayloadStatus.success : PayloadStatus.inProgress,
@@ -399,26 +421,28 @@ class PayloadManager {
         );
 
         if (isCompleted) {
-          await _finishIncomingPayload(peerId, frame.payloadId);
+          await _finishIncomingPayload(state.peerId, frame.payloadId);
         }
         break;
 
       case FrameType.payloadAck:
         // End of stream signal
-        final state = _incomingPayloads[_payloadKey(peerId, frame.payloadId)];
+        final state = _findIncomingState(peerId, frame.payloadId);
         if (state != null && state.type == PayloadType.stream) {
-          await _finishIncomingPayload(peerId, frame.payloadId);
+          await _finishIncomingPayload(state.peerId, frame.payloadId);
         }
         break;
 
       case FrameType.payloadCancel:
-        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId));
+        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId)) ??
+            _findIncomingState(peerId, frame.payloadId);
         if (state != null) {
+          _incomingPayloads.remove(_payloadKey(state.peerId, frame.payloadId));
           unawaited(state.cleanup());
           _progressController.add(
             PayloadTransferUpdate(
               payloadId: frame.payloadId,
-              peerId: peerId,
+              peerId: state.peerId,
               bytesTransferred: state.bytesReceived,
               totalBytes: state.totalBytes,
               status: PayloadStatus.canceled,
@@ -433,7 +457,17 @@ class PayloadManager {
   }
 
   Future<void> _finishIncomingPayload(String peerId, int payloadId) async {
-    final state = _incomingPayloads.remove(_payloadKey(peerId, payloadId));
+    _IncomingPayloadState? state =
+        _incomingPayloads.remove(_payloadKey(peerId, payloadId));
+    if (state == null) {
+      final matchingKey = _incomingPayloads.keys.firstWhere(
+        (k) => k.endsWith(':$payloadId'),
+        orElse: () => '',
+      );
+      if (matchingKey.isNotEmpty) {
+        state = _incomingPayloads.remove(matchingKey);
+      }
+    }
     if (state == null) return;
 
     if (state.type == PayloadType.bytes) {

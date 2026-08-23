@@ -43,6 +43,7 @@ class NearbyService {
 
   TcpServer? _tcpServer;
   StreamSubscription<Socket>? _serverSubscription;
+  StreamSubscription<BlePeripheralTransport>? _bleServerSubscription;
 
   final Map<String, NearbySession> _activeSessions = {};
 
@@ -115,7 +116,12 @@ class NearbyService {
 
     // Start TCP server
     _tcpServer = await TcpServer.bind(port: options.port ?? 0);
-    _serverSubscription = _tcpServer!.incomingConnections.listen(_handleIncomingSocket);
+    _serverSubscription =
+        _tcpServer!.incomingConnections.listen(_handleIncomingSocket);
+
+    // Listen for incoming BLE peripheral connections
+    _bleServerSubscription = _discoveryCoordinator.incomingBleTransports
+        .listen(_handleIncomingBleTransport);
 
     // Start discovery broadcast
     await _discoveryCoordinator.startAdvertising(
@@ -136,6 +142,8 @@ class NearbyService {
       await _discoveryCoordinator.stopAdvertising();
       await _serverSubscription?.cancel();
       _serverSubscription = null;
+      await _bleServerSubscription?.cancel();
+      _bleServerSubscription = null;
       await _tcpServer?.close();
       _tcpServer = null;
     }
@@ -190,6 +198,9 @@ class NearbyService {
         }
       }
     } else if (peer.bleDeviceId != null) {
+      // Pause discovery before BLE connect to avoid Android GATT Error 133
+      await stopDiscovery();
+
       // Connect via BLE
       transport = await BleTransport.connect(
         deviceId: peer.bleDeviceId!,
@@ -212,15 +223,21 @@ class NearbyService {
     _activeSessions[peer.id] = session;
 
     session.stateStream.listen((state) {
+      if (session.peer.id != peer.id) {
+        _activeSessions.remove(peer.id);
+        _activeSessions[session.peer.id] = session;
+      }
+
       _peerStateController.add(
         PeerConnectionStateUpdate(
-          peer: peer,
+          peer: session.peer,
           state: state,
           sasPin: session.sasPin,
         ),
       );
       if (state == PeerConnectionState.disconnected) {
         _activeSessions.remove(peer.id);
+        _activeSessions.remove(session.peer.id);
       }
     });
 
@@ -234,12 +251,41 @@ class NearbyService {
     }
 
     final transport = TcpTransport.wrap(socket, peerId: 'pending');
+    _setupIncomingSession(
+      transport: transport,
+      medium: DiscoveryMedium.mdns,
+      ipAddress: socket.remoteAddress.address,
+      port: socket.remotePort,
+      onCleanup: () => socket.destroy(),
+    );
+  }
 
+  void _handleIncomingBleTransport(BlePeripheralTransport transport) {
+    if (_activeSessions.length >= 32) {
+      transport.close();
+      return;
+    }
+
+    _setupIncomingSession(
+      transport: transport,
+      medium: DiscoveryMedium.ble,
+      bleDeviceId: transport.deviceId,
+    );
+  }
+
+  void _setupIncomingSession({
+    required NearbyTransport transport,
+    required DiscoveryMedium medium,
+    String? ipAddress,
+    int? port,
+    String? bleDeviceId,
+    void Function()? onCleanup,
+  }) {
     late StreamSubscription sub;
-    final handshakeTimer = Timer(const Duration(seconds: 15), () {
+    final handshakeTimer = Timer(const Duration(seconds: 30), () {
       sub.cancel();
       transport.close();
-      socket.destroy();
+      onCleanup?.call();
     });
 
     sub = transport.incomingFrames.listen((frame) async {
@@ -248,9 +294,14 @@ class NearbyService {
         await sub.cancel();
 
         // Extract remote peer info
-        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final json =
+            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         final String remotePeerId = json['peerId'] as String;
-        transport.updatePeerId(remotePeerId);
+        if (transport is TcpTransport) {
+          transport.updatePeerId(remotePeerId);
+        } else if (transport is BlePeripheralTransport) {
+          transport.updatePeerId(remotePeerId);
+        }
         final String remoteDisplayName = json['displayName'] as String;
         final Map<String, String> metadata =
             (json['metadata'] as Map<dynamic, dynamic>?)?.map(
@@ -262,9 +313,10 @@ class NearbyService {
           id: remotePeerId,
           displayName: remoteDisplayName,
           metadata: metadata,
-          discoveredVia: DiscoveryMedium.mdns,
-          ipAddress: socket.remoteAddress.address,
-          port: socket.remotePort,
+          discoveredVia: medium,
+          ipAddress: ipAddress,
+          port: port,
+          bleDeviceId: bleDeviceId,
           lastSeen: DateTime.now(),
         );
 
@@ -303,7 +355,8 @@ class NearbyService {
         );
 
         // Auto-accept if configured
-        if (_currentAdvertisingOptions?.securityMode == SecurityMode.autoAccept) {
+        if (_currentAdvertisingOptions?.securityMode ==
+            SecurityMode.autoAccept) {
           await session.respondToHandshake(accept: true);
         } else {
           _connectionRequestController.add(request);
@@ -313,13 +366,13 @@ class NearbyService {
         handshakeTimer.cancel();
         await sub.cancel();
         await transport.close();
-        socket.destroy();
+        onCleanup?.call();
       }
     }, onError: (_) {
       handshakeTimer.cancel();
       sub.cancel();
       transport.close();
-      socket.destroy();
+      onCleanup?.call();
     }, onDone: () {
       handshakeTimer.cancel();
     });

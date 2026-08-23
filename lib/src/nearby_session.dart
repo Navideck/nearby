@@ -10,7 +10,7 @@ import 'transport/transport.dart';
 
 /// Manages active peer session, protocol handshakes, SAS verification, and data transport.
 class NearbySession {
-  final Peer peer;
+  Peer peer;
   final NearbyTransport transport;
   final String localPeerId;
   final String localDisplayName;
@@ -68,7 +68,7 @@ class NearbySession {
   /// Initiates the handshake as the client/caller.
   Future<bool> initiateHandshake({
     Map<String, String> metadata = const {},
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     _setState(PeerConnectionState.connecting);
 
@@ -125,11 +125,16 @@ class NearbySession {
       case FrameType.handshakeInit:
         final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         _remoteToken = json['token'] as String?;
+        final String remotePeerId = json['peerId'] as String? ?? peer.id;
+        final String remoteDisplayName =
+            json['displayName'] as String? ?? peer.displayName;
+        peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
+
         if (_remoteToken != null) {
           _sasPin = SecurityManager.calculateSasPin(
             localPeerId: localPeerId,
             localToken: _localToken,
-            remotePeerId: peer.id,
+            remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
           );
         }
@@ -142,10 +147,15 @@ class NearbySession {
         _remoteToken = json['token'] as String?;
 
         if (accepted && _remoteToken != null) {
+          final String remotePeerId = json['peerId'] as String? ?? peer.id;
+          final String remoteDisplayName =
+              json['displayName'] as String? ?? peer.displayName;
+          peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
+
           _sasPin = SecurityManager.calculateSasPin(
             localPeerId: localPeerId,
             localToken: _localToken,
-            remotePeerId: peer.id,
+            remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
           );
           _setState(PeerConnectionState.connected);

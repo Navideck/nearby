@@ -1,6 +1,7 @@
 import 'dart:async';
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
+import '../transport/ble_transport.dart';
 import 'ble_discovery.dart';
 import 'bonsoir_discovery.dart';
 
@@ -27,6 +28,10 @@ class DiscoveryCoordinator {
   Stream<List<Peer>> get peersStream => _peersController.stream;
   Stream<Peer> get onPeerDiscovered => _peerDiscoveredController.stream;
   Stream<String> get onPeerLost => _peerLostController.stream;
+
+  /// Stream of incoming client transports connected via BLE to our GATT server.
+  Stream<BlePeripheralTransport> get incomingBleTransports =>
+      _ble.incomingTransports;
 
   List<Peer> get currentPeers => List.unmodifiable(_discoveredPeers.values);
 

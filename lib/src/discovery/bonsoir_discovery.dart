@@ -29,6 +29,7 @@ class BonsoirDiscoveryService {
     final attributes = <String, String>{
       'id': peerId,
       'name': displayName,
+      'port': port.toString(),
       ...metadata,
     };
 
@@ -78,8 +79,10 @@ class BonsoirDiscoveryService {
           final attributes = service.attributes;
           final peerId = attributes['id'] ?? service.name;
           final displayName = attributes['name'] ?? service.name;
-          final ip = service.toJson()['ip'] as String?;
-          final port = service.port;
+          final ip = service.hostAddress ??
+              (service.hostAddresses.isNotEmpty ? service.hostAddresses.first : null) ??
+              service.hostname;
+          final port = service.port > 0 ? service.port : (int.tryParse(attributes['port'] ?? '') ?? 0);
 
           final peer = Peer(
             id: peerId,
@@ -87,7 +90,7 @@ class BonsoirDiscoveryService {
             metadata: attributes,
             discoveredVia: DiscoveryMedium.mdns,
             ipAddress: ip,
-            port: port,
+            port: port > 0 ? port : null,
             lastSeen: DateTime.now(),
           );
 

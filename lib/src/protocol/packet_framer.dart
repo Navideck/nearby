@@ -252,8 +252,19 @@ class PacketFrame {
 /// validates checksums, and emits complete [PacketFrame]s.
 class PacketFramer {
   final BytesBuilder _buffer = BytesBuilder(copy: false);
-  final StreamController<PacketFrame> _frameController =
-      StreamController<PacketFrame>.broadcast();
+  late final StreamController<PacketFrame> _frameController;
+  final List<PacketFrame> _pendingFrames = [];
+
+  PacketFramer() {
+    _frameController = StreamController<PacketFrame>.broadcast(
+      onListen: () {
+        while (_pendingFrames.isNotEmpty && _frameController.hasListener) {
+          final frame = _pendingFrames.removeAt(0);
+          _frameController.add(frame);
+        }
+      },
+    );
+  }
 
   Stream<PacketFrame> get frames => _frameController.stream;
 
@@ -298,7 +309,11 @@ class PacketFramer {
       final PacketFrame? frame = PacketFrame.fromBytes(frameBytes);
 
       if (frame != null) {
-        _frameController.add(frame);
+        if (_frameController.hasListener) {
+          _frameController.add(frame);
+        } else {
+          _pendingFrames.add(frame);
+        }
         offset += frameTotalLength;
       } else {
         // Corrupted frame or false magic bytes, advance by 1
@@ -315,6 +330,7 @@ class PacketFramer {
   /// Closes the framer controller.
   Future<void> close() async {
     _buffer.clear();
+    _pendingFrames.clear();
     await _frameController.close();
   }
 }
