@@ -17,10 +17,10 @@ Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/
 | Android  | ✅               | ✅              | ✅             | ✅           |
 | iOS      | ✅               | ✅              | ✅             | ✅           |
 | macOS    | ✅               | ✅              | ✅             | ✅           |
-| Windows  | ❌               | ✅              | ❌             | ✅           |
-| Linux    | ❌               | ✅              | ❌             | ✅           |
+| Windows  | ✅               | ✅              | ✅             | ✅           |
+| Linux    | ✅               | ⚠️*             | ✅             | ⚠️*          |
 
-On desktop platforms without mDNS support (Windows / Linux), peers fall back automatically to BLE-only discovery and GATT-based transport.
+\* *Linux supports BLE Central mode (scanning and connecting) only; BLE Peripheral advertising is not supported on Linux.*
 
 ---
 
@@ -136,6 +136,14 @@ Sandboxed macOS apps must enable network client/server and Bluetooth entitlement
 <key>com.apple.security.device.bluetooth</key>
 <true/>
 ```
+
+### Linux Requirements
+
+- **mDNS / Avahi**: Ensure the Avahi daemon and client libraries are installed:
+  ```bash
+  sudo apt install avahi-daemon libavahi-client-dev
+  ```
+- **Bluetooth**: Requires BlueZ (`sudo apt install bluez`). Note: `universal_ble` supports BLE Central mode (scanning and connecting) on Linux; BLE Peripheral advertising is not currently supported.
 
 ---
 
