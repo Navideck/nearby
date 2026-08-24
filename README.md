@@ -2,7 +2,21 @@
 
 A high-performance, cross-platform peer-to-peer networking plugin for Flutter — offering functionality equivalent to **Apple's Multipeer Connectivity** and **Google's Nearby Connections API**.
 
-Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/packages/bonsoir)** (mDNS / Bonjour) and **[Universal BLE](https://pub.dev/packages/universal_ble)** (Bluetooth Low Energy).
+Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/packages/bonsoir)** (mDNS / Bonjour) and **[Universal BLE](https://pub.dev/packages/universal_ble)** (Bluetooth Low Energy). No native plugin code required on top of those dependencies.
+
+---
+
+## 📱 Platform Support
+
+| Platform | Discovery (mDNS) | Discovery (BLE) | High-Speed TCP | BLE Fallback |
+| -------- | :--------------: | :-------------: | :------------: | :----------: |
+| Android  | ✅               | ✅              | ✅             | ✅           |
+| iOS      | ✅               | ✅              | ✅             | ✅           |
+| macOS    | ✅               | ✅              | ✅             | ✅           |
+| Windows  | ❌               | ✅              | ❌             | ✅           |
+| Linux    | ❌               | ✅              | ❌             | ✅           |
+
+On desktop platforms without mDNS support (Windows / Linux), peers fall back automatically to BLE-only discovery and GATT-based transport.
 
 ---
 
@@ -41,13 +55,33 @@ Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/
 +------------------------------+------------------------------+
 ```
 
+Every frame on the wire is wrapped by the packet framer (`magic bytes → length → body → CRC32`), so corrupted or partial reads are detected and dropped rather than desynchronizing the stream.
+
+---
+
+## 📦 Installation
+
+Add to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  nearby:
+    path: /path/to/nearby   # or git/pub once published
+```
+
+Then run:
+
+```bash
+flutter pub get
+```
+
+> **Note**: This package is pure Dart on top of Bonsoir and Universal BLE. Make sure your host app also declares the platform permissions below.
+
 ---
 
 ## 📱 Platform Setup & Permissions
 
 ### Android (`android/app/src/main/AndroidManifest.xml`)
-
-Add the following permissions:
 
 ```xml
 <!-- Local Network & mDNS -->
@@ -67,9 +101,9 @@ Add the following permissions:
 <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 ```
 
-### iOS (`ios/Runner/Info.plist`) & macOS (`macos/Runner/Info.plist`)
+Runtime permissions (`BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `NEARBY_WIFI_DEVICES` depending on OS version) must be requested from Dart before starting discovery/advertising — e.g. with [`permission_handler`](https://pub.dev/packages/permission_handler).
 
-Add the keys for Bluetooth and Local Network usage, including your custom Bonjour service name:
+### iOS (`ios/Runner/Info.plist`) & macOS (`macos/Runner/Info.plist`)
 
 ```xml
 <key>NSBluetoothAlwaysUsageDescription</key>
@@ -84,6 +118,21 @@ Add the keys for Bluetooth and Local Network usage, including your custom Bonjou
 </array>
 ```
 
+> Replace `_nearby-app._tcp` with `<your-serviceId>._tcp` if you use a custom `serviceId`.
+
+### macOS Entitlements (`macos/Runner/*.entitlements`)
+
+Sandboxed macOS apps must enable network client/server and Bluetooth entitlements in **both** DebugProfile and Release:
+
+```xml
+<key>com.apple.security.network.server</key>
+<true/>
+<key>com.apple.security.network.client</key>
+<true/>
+<key>com.apple.security.device.bluetooth</key>
+<true/>
+```
+
 ---
 
 ## 🚀 Quick Start
@@ -95,6 +144,11 @@ import 'package:nearby/nearby.dart';
 
 final nearby = NearbyService(
   localDisplayName: 'My iPad Pro',
+  // Optional: stable peer identity across restarts (random UUID by default)
+  // localPeerId: 'my-stable-device-id',
+  //
+  // Optional: where incoming file payloads are written
+  // storageDirectory: await getApplicationDocumentsDirectory(),
 );
 ```
 
@@ -130,19 +184,33 @@ await nearby.startDiscovery(
 
 ### 4. Connect & Handshake
 
+Both devices should run advertising **and** discovery for bidirectional visibility.
+
+**Initiator** — request a connection to a discovered peer:
+
 ```dart
-// Connect to a discovered peer
 final success = await nearby.requestConnection(peer);
 
-// On advertiser device: handle incoming connection requests
+// Track connection lifecycle + get the SAS PIN shown on this device
+nearby.peerStateStream.listen((update) {
+  print('${update.peer.displayName}: ${update.state.name} (PIN: ${update.sasPin})');
+});
+```
+
+**Receiver (advertiser)** — handle incoming connection requests and verify the PIN:
+
+```dart
 nearby.connectionRequestsStream.listen((request) {
   print('Incoming request from ${request.peer.displayName} with PIN: ${request.authenticationPin}');
-  // Accept connection:
+  // Show request.authenticationPin to the user and compare with the initiator's screen,
+  // then accept or reject:
   nearby.acceptConnection(request.peer.id);
   // Or reject:
   // nearby.rejectConnection(request.peer.id, reason: 'Busy');
 });
 ```
+
+With `SecurityMode.autoAccept`, incoming requests are accepted automatically and never appear on `connectionRequestsStream`.
 
 ### 5. Send & Receive Payloads
 
@@ -166,6 +234,11 @@ nearby.payloadProgressStream.listen((update) {
 });
 ```
 
+#### Cancel an In-Flight Transfer
+```dart
+nearby.cancelPayload(payloadId);
+```
+
 #### Stream Continuous Telemetry / Audio
 ```dart
 final streamController = StreamController<List<int>>();
@@ -178,19 +251,73 @@ streamController.add([1, 2, 3, 4]);
 #### Receive Incoming Payloads
 ```dart
 nearby.payloadReceivedStream.listen((payload) {
-  if (payload.type == PayloadType.bytes) {
-    final text = utf8.decode(payload.bytes!);
-    print('Received message: $text');
-  } else if (payload.type == PayloadType.file) {
-    print('Received file at: ${payload.file!.path} (${payload.fileName})');
-  } else if (payload.type == PayloadType.stream) {
-    print('Receiving real-time stream...');
-    payload.stream!.listen((chunk) {
-      // Process stream chunk
-    });
+  switch (payload.type) {
+    case PayloadType.bytes:
+      final text = utf8.decode(payload.bytes!);
+      print('Received message: $text');
+    case PayloadType.file:
+      print('Received file at: ${payload.file!.path} (${payload.fileName})');
+    case PayloadType.stream:
+      print('Receiving real-time stream...');
+      payload.stream!.listen((chunk) {
+        // Process stream chunk
+      });
   }
 });
 ```
+
+### 6. Disconnect & Tear Down
+
+```dart
+await nearby.disconnectPeer(peerId);       // single session
+await nearby.disconnectAll();               // every session
+await nearby.stopDiscovery();
+await nearby.stopAdvertising();
+await nearby.dispose();                     // full teardown
+```
+
+---
+
+## 📖 API Overview
+
+### `NearbyService`
+
+| Member | Description |
+| ------ | ----------- |
+| `startAdvertising({options})` | Broadcast presence over mDNS and/or BLE and listen for inbound connections. |
+| `stopAdvertising()` | Stop broadcasting and close inbound servers. |
+| `startDiscovery({options})` | Browse for advertising peers. |
+| `stopDiscovery()` | Stop browsing. |
+| `requestConnection(peer)` | Connect to a discovered peer (TCP first, BLE fallback) and run the handshake. Returns `Future<bool>`. |
+| `acceptConnection(peerId)` | Accept a pending incoming request. |
+| `rejectConnection(peerId, {reason})` | Reject a pending incoming request. |
+| `disconnectPeer(peerId)` / `disconnectAll()` | Terminate one or all sessions. |
+| `sendBytes(peerId, bytes)` / `sendBytesToAll(bytes)` | Send byte payloads. |
+| `sendFile(peerId, file, {customFileName})` | Send a file with chunked progress. |
+| `sendStream(peerId, stream)` | Pipe a continuous byte stream. |
+| `cancelPayload(payloadId)` | Abort an in-progress transfer. |
+| `dispose()` | Shut down everything. |
+
+Streams: `discoveredPeersStream`, `connectionRequestsStream`, `peerStateStream`, `payloadReceivedStream`, `payloadProgressStream`.
+Getters: `discoveredPeers`, `connectedPeers`, `isAdvertising`, `isDiscovering`.
+
+### Key Models
+
+| Model | Notes |
+| ----- | ----- |
+| `Peer` | `id`, `displayName`, `metadata`, `discoveredVia` (`mdns` / `ble` / `hybrid`), `ipAddress`, `port`, `bleDeviceId`, `rssi`, `lastSeen`. |
+| `AdvertisingOptions` | `serviceId` (required), `strategy`, `securityMode`, `metadata` (TXT record), `port` (fixed TCP port; dynamic if omitted). |
+| `DiscoveryOptions` | `serviceId` (required), `strategy`, `metadataFilter`. |
+| `ConnectionRequest` | Incoming request with `peer`, `authenticationPin`, `metadata`. |
+| `NearbyPayload` | Received payload; inspect `type` then `bytes` / `file` / `stream`. |
+| `PayloadTransferUpdate` | `payloadId`, `bytesTransferred`, `totalBytes`, `status`, `percentage`. |
+
+### Behavior Notes
+
+- Up to **32 concurrent sessions/pending handshakes** are supported; further inbound connections are dropped.
+- Incoming handshakes time out after **15 seconds**.
+- Connection attempts try **TCP first**, falling back to BLE when the LAN socket fails or the peer has no IP/port.
+- Duplicate inbound connections from an already-connected peer are rejected automatically.
 
 ---
 
@@ -200,4 +327,12 @@ Run all unit tests, framing verifications, and mock integration suites:
 
 ```bash
 flutter test
+```
+
+## 📂 Example
+
+A complete working demo lives in [`example/`](example/) — run it on two physical devices (or simulators on the same machine) to see discovery, PIN verification, and file transfer end-to-end:
+
+```bash
+cd example && flutter run
 ```

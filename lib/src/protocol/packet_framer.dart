@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'security_manager.dart';
 
 /// Magic bytes identifying the Nearby protocol frame ('N', 'B').
 const int kMagicByte0 = 0x4E;
@@ -39,25 +40,27 @@ class PacketFrame {
   final int payloadId;
   final int sequence;
   final Uint8List body;
+  final Uint8List? authTag;
 
   const PacketFrame({
     required this.type,
     this.payloadId = 0,
     this.sequence = 0,
     required this.body,
+    this.authTag,
   });
 
-  /// Encodes this frame into a binary payload with magic bytes, length, and CRC32 checksum.
-  Uint8List toBytes() {
+  /// Encodes the header, body, and CRC32 into a byte buffer.
+  Uint8List _rawHeaderAndBody({required bool authenticated}) {
     final int bodyLength = body.length;
-    final int totalLength = kHeaderLength + bodyLength + 4; // +4 for CRC32
+    final int totalLength = kHeaderLength + bodyLength + 4;
     final Uint8List buffer = Uint8List(totalLength);
     final ByteData byteData = ByteData.sublistView(buffer);
 
-    // Magic & Version
+    // Magic & Version (set 0x80 bit if authenticated)
     buffer[0] = kMagicByte0;
     buffer[1] = kMagicByte1;
-    buffer[2] = kProtocolVersion;
+    buffer[2] = authenticated ? (kProtocolVersion | 0x80) : kProtocolVersion;
     buffer[3] = type.value;
 
     // Payload ID (64-bit int)
@@ -81,8 +84,31 @@ class PacketFrame {
     return buffer;
   }
 
+  /// Encodes this frame into a binary payload with magic bytes, length, CRC32 checksum,
+  /// and an optional HMAC-SHA256 authentication tag if [sessionKey] is provided.
+  Uint8List toBytes({Uint8List? sessionKey}) {
+    final bool useAuth = sessionKey != null;
+    final Uint8List prefix = _rawHeaderAndBody(authenticated: useAuth);
+    if (!useAuth) {
+      return prefix;
+    }
+
+    final Uint8List buffer = Uint8List(prefix.length + 32);
+    buffer.setRange(0, prefix.length, prefix);
+    final tag = SecurityManager.computeHmac(sessionKey, prefix);
+    buffer.setRange(prefix.length, buffer.length, tag);
+    return buffer;
+  }
+
+  /// Verifies the HMAC-SHA256 authentication tag of this frame using [sessionKey].
+  bool verifyAuthTag(Uint8List sessionKey) {
+    if (authTag == null) return false;
+    final prefix = _rawHeaderAndBody(authenticated: true);
+    return SecurityManager.verifyHmac(sessionKey, prefix, authTag!);
+  }
+
   /// Parses a complete frame from a byte buffer.
-  static PacketFrame? fromBytes(Uint8List bytes) {
+  static PacketFrame? fromBytes(Uint8List bytes, {Uint8List? sessionKey}) {
     if (bytes.length < kHeaderLength + 4) return null;
 
     if (bytes[0] != kMagicByte0 || bytes[1] != kMagicByte1) {
@@ -90,7 +116,9 @@ class PacketFrame {
     }
 
     final ByteData byteData = ByteData.sublistView(bytes);
-    final int version = bytes[2];
+    final int rawVersion = bytes[2];
+    final bool hasAuthTag = (rawVersion & 0x80) != 0;
+    final int version = rawVersion & ~0x80;
     if (version != kProtocolVersion) return null;
 
     final int typeVal = bytes[3];
@@ -104,7 +132,8 @@ class PacketFrame {
       return null; // Reject oversized frame
     }
 
-    if (bytes.length < kHeaderLength + bodyLength + 4) {
+    final int authTagLength = hasAuthTag ? 32 : 0;
+    if (bytes.length < kHeaderLength + bodyLength + 4 + authTagLength) {
       return null; // Incomplete packet
     }
 
@@ -116,12 +145,31 @@ class PacketFrame {
       return null;
     }
 
+    Uint8List? authTag;
+    if (hasAuthTag) {
+      authTag = bytes.sublist(
+        kHeaderLength + bodyLength + 4,
+        kHeaderLength + bodyLength + 4 + 32,
+      );
+      if (sessionKey != null) {
+        final isValid = SecurityManager.verifyHmac(
+          sessionKey,
+          bytes.sublist(0, kHeaderLength + bodyLength + 4),
+          authTag,
+        );
+        if (!isValid) {
+          return null; // Checksum or tag mismatch
+        }
+      }
+    }
+
     final Uint8List body = bytes.sublist(kHeaderLength, kHeaderLength + bodyLength);
     return PacketFrame(
       type: type,
       payloadId: payloadId,
       sequence: sequence,
       body: body,
+      authTag: authTag,
     );
   }
 
@@ -291,13 +339,16 @@ class PacketFramer {
       }
 
       final ByteData byteData = ByteData.sublistView(currentBytes, offset);
+      final int rawVersion = currentBytes[offset + 2];
+      final bool hasAuthTag = (rawVersion & 0x80) != 0;
       final int bodyLength = byteData.getUint32(16, Endian.big);
       if (bodyLength > kMaxFrameBodyLength) {
         // Discard corrupted or oversized frame header
         offset += 2;
         continue;
       }
-      final int frameTotalLength = kHeaderLength + bodyLength + 4;
+      final int authTagLength = hasAuthTag ? 32 : 0;
+      final int frameTotalLength = kHeaderLength + bodyLength + 4 + authTagLength;
 
       if (offset + frameTotalLength > currentBytes.length) {
         // Incomplete frame, wait for more data

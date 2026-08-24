@@ -157,6 +157,16 @@ class BleTransport implements NearbyTransport {
     return next;
   }
 
+  Uint8List? _sessionKey;
+
+  @override
+  Uint8List? get sessionKey => _sessionKey;
+
+  @override
+  set sessionKey(Uint8List? key) {
+    _sessionKey = key;
+  }
+
   @override
   String get peerId => _peerId;
 
@@ -185,7 +195,7 @@ class BleTransport implements NearbyTransport {
     if (_closed) {
       throw StateError('Cannot send frame on closed BLE transport');
     }
-    final bytes = frame.toBytes();
+    final bytes = frame.toBytes(sessionKey: _sessionKey);
     await sendRaw(bytes);
   }
 
@@ -318,6 +328,16 @@ class BlePeripheralTransport implements NearbyTransport {
     _peerId = peerId;
   }
 
+  Uint8List? _sessionKey;
+
+  @override
+  Uint8List? get sessionKey => _sessionKey;
+
+  @override
+  set sessionKey(Uint8List? key) {
+    _sessionKey = key;
+  }
+
   /// The remote central device identifier.
   String get deviceId => _deviceId;
 
@@ -335,7 +355,7 @@ class BlePeripheralTransport implements NearbyTransport {
     if (_closed) {
       throw StateError('Cannot send frame on closed BLE peripheral transport');
     }
-    final bytes = frame.toBytes();
+    final bytes = frame.toBytes(sessionKey: _sessionKey);
     await sendRaw(bytes);
   }
 

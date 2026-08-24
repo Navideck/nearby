@@ -8,6 +8,9 @@ import 'package:nearby/nearby.dart';
 class MockLoopbackTransport implements NearbyTransport {
   @override
   final String peerId;
+  @override
+  Uint8List? sessionKey;
+
   final StreamController<PacketFrame> _incoming =
       StreamController<PacketFrame>.broadcast();
   MockLoopbackTransport? paired;
@@ -24,7 +27,11 @@ class MockLoopbackTransport implements NearbyTransport {
   @override
   Future<void> sendFrame(PacketFrame frame) async {
     if (_closed) throw StateError('Closed transport');
-    paired?._incoming.add(frame);
+    final bytes = frame.toBytes(sessionKey: sessionKey);
+    final wireFrame = PacketFrame.fromBytes(bytes);
+    if (wireFrame != null) {
+      paired?._incoming.add(wireFrame);
+    }
   }
 
   @override
@@ -32,7 +39,7 @@ class MockLoopbackTransport implements NearbyTransport {
     if (_closed) throw StateError('Closed transport');
     final frame = PacketFrame.fromBytes(data);
     if (frame != null) {
-      paired?._incoming.add(frame);
+      await sendFrame(frame);
     }
   }
 

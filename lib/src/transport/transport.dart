@@ -7,6 +7,10 @@ abstract class NearbyTransport {
   /// Unique identifier of the remote peer connected on this transport.
   String get peerId;
 
+  /// Optional authenticated session key used for signing outgoing frames.
+  Uint8List? get sessionKey;
+  set sessionKey(Uint8List? key);
+
   /// Stream of decoded packet frames received from the remote peer.
   Stream<PacketFrame> get incomingFrames;
 

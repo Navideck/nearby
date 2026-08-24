@@ -6,6 +6,9 @@ import 'package:nearby/nearby.dart';
 class MockSessionTransport implements NearbyTransport {
   @override
   final String peerId;
+  @override
+  Uint8List? sessionKey;
+
   final StreamController<PacketFrame> _incoming =
       StreamController<PacketFrame>.broadcast();
   MockSessionTransport? paired;
@@ -22,12 +25,15 @@ class MockSessionTransport implements NearbyTransport {
   @override
   Future<void> sendFrame(PacketFrame frame) async {
     if (_closed) throw StateError('Transport closed');
-    // Asynchronously dispatch to paired transport
-    scheduleMicrotask(() {
-      if (paired != null && !paired!._closed) {
-        paired!._incoming.add(frame);
-      }
-    });
+    final bytes = frame.toBytes(sessionKey: sessionKey);
+    final wireFrame = PacketFrame.fromBytes(bytes);
+    if (wireFrame != null) {
+      scheduleMicrotask(() {
+        if (paired != null && !paired!._closed) {
+          paired!._incoming.add(wireFrame);
+        }
+      });
+    }
   }
 
   @override
@@ -134,6 +140,21 @@ void main() {
       expect(sessionA.sessionKey, isNotNull);
       expect(sessionB.sessionKey, isNotNull);
       expect(sessionA.sessionKey!.length, equals(32));
+      expect(sessionA.sessionKey, equals(sessionB.sessionKey));
+    });
+
+    test('Handshake with metadata authenticates transcript and matches SAS PIN symmetrically', () async {
+      final metadata = {'role': 'controller', 'appVersion': '1.2.0'};
+      final handshakeFuture = sessionA.initiateHandshake(metadata: metadata);
+
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(sessionB.state, equals(PeerConnectionState.authenticating));
+
+      await sessionB.respondToHandshake(accept: true);
+      final result = await handshakeFuture;
+      expect(result, isTrue);
+
+      expect(sessionA.sasPin, equals(sessionB.sasPin));
       expect(sessionA.sessionKey, equals(sessionB.sessionKey));
     });
 

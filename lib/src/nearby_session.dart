@@ -24,6 +24,8 @@ class NearbySession {
   String? _sharedSecret;
   String? _sasPin;
   DateTime _lastTxTime = DateTime.fromMillisecondsSinceEpoch(0);
+  Map<String, String> _handshakeMetadata = const {};
+  Uint8List? _sessionKey;
 
   PeerConnectionState _state = PeerConnectionState.connecting;
   final Completer<bool> _handshakeCompleter = Completer<bool>();
@@ -42,8 +44,6 @@ class NearbySession {
   }) {
     _init();
   }
-
-  Uint8List? _sessionKey;
 
   PeerConnectionState get state => _state;
   String? get sasPin => _sasPin;
@@ -82,6 +82,7 @@ class NearbySession {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     _setState(PeerConnectionState.connecting);
+    _handshakeMetadata = Map<String, String>.unmodifiable(metadata);
 
     // Send HandshakeInit
     await transport.sendFrame(
@@ -89,7 +90,7 @@ class NearbySession {
         peerId: localPeerId,
         displayName: localDisplayName,
         token: _localToken,
-        metadata: metadata,
+        metadata: _handshakeMetadata,
       ),
     );
 
@@ -123,11 +124,14 @@ class NearbySession {
           localToken: _localToken,
           remotePeerId: peer.id,
           remoteToken: _remoteToken!,
+          sharedSecretHex: _sharedSecret,
+          metadata: _handshakeMetadata,
         );
         _sessionKey = SecurityManager.deriveSessionKey(
           sharedSecretHex: _sharedSecret!,
           transcriptDigest: transcript,
         );
+        transport.sessionKey = _sessionKey;
       }
       _setState(PeerConnectionState.connected);
       _startHeartbeat();
@@ -151,6 +155,12 @@ class NearbySession {
         final String remotePeerId = json['peerId'] as String? ?? peer.id;
         final String remoteDisplayName =
             json['displayName'] as String? ?? peer.displayName;
+        final Map<String, String> metadata =
+            (json['metadata'] as Map<dynamic, dynamic>?)?.map(
+                  (k, v) => MapEntry(k.toString(), v.toString()),
+                ) ??
+                {};
+        _handshakeMetadata = Map<String, String>.unmodifiable(metadata);
         peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
 
         if (_remoteToken != null) {
@@ -164,6 +174,7 @@ class NearbySession {
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
             sharedSecretHex: _sharedSecret,
+            metadata: _handshakeMetadata,
           );
         }
         _setState(PeerConnectionState.authenticating);
@@ -190,17 +201,21 @@ class NearbySession {
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
             sharedSecretHex: _sharedSecret,
+            metadata: _handshakeMetadata,
           );
           final transcript = SecurityManager.computeTranscriptDigest(
             localPeerId: localPeerId,
             localToken: _localToken,
             remotePeerId: remotePeerId,
             remoteToken: _remoteToken!,
+            sharedSecretHex: _sharedSecret,
+            metadata: _handshakeMetadata,
           );
           _sessionKey = SecurityManager.deriveSessionKey(
             sharedSecretHex: _sharedSecret!,
             transcriptDigest: transcript,
           );
+          transport.sessionKey = _sessionKey;
           _setState(PeerConnectionState.connected);
           _startHeartbeat();
           if (!_handshakeCompleter.isCompleted) {
@@ -223,25 +238,29 @@ class NearbySession {
         break;
 
       case FrameType.heartbeat:
-        // Keepalive pulse acknowledged
-        break;
-
       case FrameType.disconnect:
-        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
-        final reason = json['reason'] as String? ?? 'Peer disconnected';
-        disconnect(reason: reason, notifyRemote: false);
-        break;
-
       case FrameType.payloadHeader:
       case FrameType.payloadChunk:
       case FrameType.payloadAck:
       case FrameType.payloadCancel:
-        if (_state != PeerConnectionState.connected) {
-          await disconnect(
-            reason: 'Payload received before handshake completed',
-          );
+        // Enforce HMAC authentication for all post-handshake frames
+        if (_sessionKey != null) {
+          if (frame.authTag == null || !frame.verifyAuthTag(_sessionKey!)) {
+            disconnect(reason: 'Rejected frame: invalid HMAC authentication tag');
+            return;
+          }
+        }
+
+        if (frame.type == FrameType.heartbeat) {
+          // Keepalive pulse acknowledged
+          break;
+        } else if (frame.type == FrameType.disconnect) {
+          final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+          final reason = json['reason'] as String? ?? 'Peer disconnected';
+          disconnect(reason: reason, notifyRemote: false);
           break;
         }
+
         await payloadManager.handleIncomingFrame(
           peerId: peer.id,
           frame: frame,

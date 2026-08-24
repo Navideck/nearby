@@ -45,6 +45,16 @@ class TcpTransport implements NearbyTransport {
     return TcpTransport._(socket, peerId);
   }
 
+  Uint8List? _sessionKey;
+
+  @override
+  Uint8List? get sessionKey => _sessionKey;
+
+  @override
+  set sessionKey(Uint8List? key) {
+    _sessionKey = key;
+  }
+
   @override
   String get peerId => _peerId;
 
@@ -75,7 +85,7 @@ class TcpTransport implements NearbyTransport {
     if (_closed) {
       throw StateError('Cannot send frame on closed TCP transport');
     }
-    final bytes = frame.toBytes();
+    final bytes = frame.toBytes(sessionKey: _sessionKey);
     await sendRaw(bytes);
   }
 

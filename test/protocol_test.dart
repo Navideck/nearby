@@ -124,6 +124,48 @@ void main() {
       final parsed = PacketFrame.fromBytes(truncated);
       expect(parsed, isNull);
     });
+
+    test('PacketFrame authenticated serialization and HMAC verification', () {
+      final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final frame = PacketFrame.payloadChunk(
+        payloadId: 555,
+        sequence: 2,
+        chunkData: Uint8List.fromList([1, 2, 3, 4, 5]),
+      );
+
+      final authBytes = frame.toBytes(sessionKey: key);
+      // Length should be 20 header + 5 body + 4 CRC32 + 32 HMAC tag = 61
+      expect(authBytes.length, equals(20 + 5 + 4 + 32));
+
+      final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);
+      expect(parsed, isNotNull);
+      expect(parsed!.authTag, isNotNull);
+      expect(parsed.authTag!.length, equals(32));
+      expect(parsed.verifyAuthTag(key), isTrue);
+
+      final wrongKey = Uint8List.fromList(List.generate(32, (i) => i + 2));
+      expect(PacketFrame.fromBytes(authBytes, sessionKey: wrongKey), isNull);
+      expect(parsed.verifyAuthTag(wrongKey), isFalse);
+    });
+
+    test('PacketFrame rejection on tampered payload in authenticated frame', () {
+      final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final frame = PacketFrame.payloadChunk(
+        payloadId: 555,
+        sequence: 2,
+        chunkData: Uint8List.fromList([1, 2, 3, 4, 5]),
+      );
+
+      final authBytes = frame.toBytes(sessionKey: key);
+      // Tamper with body byte and recompute CRC32 to bypass simple checksum
+      authBytes[20] = 0xAA;
+      final newCrc = Crc32.compute(authBytes.sublist(0, 25));
+      ByteData.sublistView(authBytes).setUint32(25, newCrc, Endian.big);
+
+      // CRC32 passes, but HMAC verification MUST fail and reject the packet
+      final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);
+      expect(parsed, isNull);
+    });
   });
 
   group('PacketFramer Stream Processing', () {
