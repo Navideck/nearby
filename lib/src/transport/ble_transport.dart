@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import '../protocol/packet_framer.dart';
@@ -298,15 +299,35 @@ class BlePeripheralTransport implements NearbyTransport {
 
   @override
   Future<void> sendRaw(Uint8List data) {
+    // Windows WinRT GATT server does not support targeting a specific client device ID
+    // when sending characteristic notifications/indications, returning a 'not-supported'
+    // error if deviceId is provided. Passing null targets all subscribed centrals.
+    final targetDeviceId =
+        defaultTargetPlatform == TargetPlatform.windows ? null : _deviceId;
+
     return _chunkSender.sendChunks(
       data: data,
       mtu: _mtu,
       isClosed: () => _closed,
-      writeChunk: (chunk) => UniversalBlePeripheral.updateCharacteristicValue(
-        characteristicId: kNearbyBleRxCharUuid,
-        value: chunk,
-        deviceId: _deviceId,
-      ),
+      writeChunk: (chunk) async {
+        try {
+          await UniversalBlePeripheral.updateCharacteristicValue(
+            characteristicId: kNearbyBleRxCharUuid,
+            value: chunk,
+            deviceId: targetDeviceId,
+          );
+        } on PlatformException catch (e) {
+          if (e.code == 'not-supported') {
+            await UniversalBlePeripheral.updateCharacteristicValue(
+              characteristicId: kNearbyBleRxCharUuid,
+              value: chunk,
+              deviceId: null,
+            );
+          } else {
+            rethrow;
+          }
+        }
+      },
     );
   }
 
