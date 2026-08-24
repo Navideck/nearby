@@ -1,8 +1,12 @@
-
-import 'nearby_platform_interface.dart';
-
-class Nearby {
-  Future<String?> getPlatformVersion() {
-    return NearbyPlatform.instance.getPlatformVersion();
-  }
-}
+export 'src/models/connection_request.dart';
+export 'src/models/nearby_options.dart';
+export 'src/models/payload.dart';
+export 'src/models/peer.dart';
+export 'src/payload/payload_manager.dart';
+export 'src/nearby_service.dart';
+export 'src/nearby_session.dart';
+export 'src/protocol/packet_framer.dart';
+export 'src/protocol/security_manager.dart';
+export 'src/transport/ble_transport.dart';
+export 'src/transport/tcp_transport.dart';
+export 'src/transport/transport.dart';

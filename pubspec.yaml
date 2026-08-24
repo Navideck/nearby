@@ -11,11 +11,19 @@ dependencies:
   flutter:
     sdk: flutter
   plugin_platform_interface: ^2.0.2
+  bonsoir: ^7.1.5
+  universal_ble: ^2.1.1
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  universal_ble:
+    git:
+      url: https://github.com/Navideck/universal_ble.git
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
