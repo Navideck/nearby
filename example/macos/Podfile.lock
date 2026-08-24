@@ -3,8 +3,6 @@ PODS:
     - Flutter
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
-  - nearby (0.0.1):
-    - FlutterMacOS
   - universal_ble (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -12,7 +10,6 @@ PODS:
 DEPENDENCIES:
   - bonsoir_darwin (from `Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin`)
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - nearby (from `Flutter/ephemeral/.symlinks/plugins/nearby/macos`)
   - universal_ble (from `Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin`)
 
 EXTERNAL SOURCES:
@@ -20,16 +17,13 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin
   FlutterMacOS:
     :path: Flutter/ephemeral
-  nearby:
-    :path: Flutter/ephemeral/.symlinks/plugins/nearby/macos
   universal_ble:
     :path: Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin
 
 SPEC CHECKSUMS:
-  bonsoir_darwin: 14bd7429acb51db6a8e51f6574ac3b1ea0037a87
+  bonsoir_darwin: 722434d059e48f381a3af21440dd79d95cc41c78
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
-  nearby: b99c1418175e94b4163a739e2bb2bcc475efbbe4
-  universal_ble: a322ebabee64f0ec27a313e89a5dd6967f37a60f
+  universal_ble: d0c3d7347d16c82746288e13ed2f1368ecf8e716
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 
