@@ -14,13 +14,17 @@ dependencies:
   bonsoir: ^7.1.5
   universal_ble: ^2.1.1
   crypto: ^3.0.3
-  async: ^2.11.0
-  convert: ^3.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  universal_ble:
+    git:
+      url: https://github.com/Navideck/universal_ble.git
+      ref: add-queue-to-universal-ble-peripheral
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

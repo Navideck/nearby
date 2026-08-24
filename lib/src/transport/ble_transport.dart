@@ -1,63 +1,37 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:universal_ble/universal_ble.dart';
 import '../protocol/packet_framer.dart';
+import 'ble/ble_chunk_sender.dart';
+import 'ble/ble_constants.dart';
+import 'ble/ble_transport_registry.dart';
 import 'transport.dart';
 
-/// Standard Nearby Bluetooth GATT Service and Characteristic UUIDs (dedicated 128-bit).
-const String kNearbyBleServiceUuid = 'fa5a0001-9a3b-4654-8fe2-8a96d11f81d1';
-const String kNearbyBleTxCharUuid = 'fa5a0002-9a3b-4654-8fe2-8a96d11f81d1';
-const String kNearbyBleRxCharUuid = 'fa5a0003-9a3b-4654-8fe2-8a96d11f81d1';
+// Re-export constants for backwards compatibility
+export 'ble/ble_constants.dart';
 
 /// BLE GATT Central (Client) implementation of [NearbyTransport].
 /// Connects to a remote BLE GATT peripheral (server).
 class BleTransport implements NearbyTransport {
-  static final Map<String, BleTransport> _activeTransports = {};
-  static bool _callbacksInitialized = false;
-
   final String _deviceId;
   String _peerId;
   final String _serviceUuid;
   final PacketFramer _framer = PacketFramer();
   final Completer<void> _doneCompleter = Completer<void>();
+  final BleChunkSender _chunkSender = BleChunkSender();
   bool _closed = false;
-  int _mtu = 240;
+  int _mtu = kBleDefaultMtu;
 
   BleTransport._(this._deviceId, this._peerId, [this._serviceUuid = kNearbyBleServiceUuid]) {
-    _ensureInitialized();
-    _activeTransports[_deviceId.toLowerCase()] = this;
+    BleTransportRegistry.instance.registerCentral(_deviceId, this);
   }
 
-  /// Factory registration to handle incoming characteristic value changes for this device.
-  static void _ensureInitialized() {
-    if (_callbacksInitialized) return;
-    _callbacksInitialized = true;
+  /// Indicates if this transport is closed.
+  bool get isClosed => _closed;
 
-    UniversalBle.onValueChange = (
-      String deviceId,
-      String characteristicId,
-      Uint8List value,
-      dynamic _,
-    ) {
-      final transport = _activeTransports[deviceId.toLowerCase()];
-      if (transport != null && !transport._closed) {
-        if (BleUuidParser.compareStrings(characteristicId, kNearbyBleRxCharUuid)) {
-          transport._framer.addBytes(value);
-        }
-      }
-    };
-
-    UniversalBle.onConnectionChange = (
-      String deviceId,
-      bool isConnected,
-      String? error,
-    ) {
-      if (!isConnected) {
-        final transport = _activeTransports.remove(deviceId.toLowerCase());
-        transport?.close();
-      }
-    };
-  }
+  /// Underlying packet framer instance.
+  PacketFramer get framer => _framer;
 
   /// Connects to a remote BLE peripheral and discovers nearby GATT characteristics.
   static Future<BleTransport> connect({
@@ -73,10 +47,10 @@ class BleTransport implements NearbyTransport {
       await UniversalBle.stopScan();
     } catch (_) {}
 
-    // Give Bluetooth controller time to transition from scanning to connecting mode
-    await Future.delayed(const Duration(milliseconds: 200));
+    // Give Bluetooth controller brief transition window from scanning to connecting mode
+    await Future.delayed(const Duration(milliseconds: 100));
 
-    // 2. Connect with overall deadline retry and stale handle cleanup
+    // 2. Connect with overall deadline retry
     final deadline = DateTime.now().add(timeout);
     int attempts = 0;
     while (true) {
@@ -86,12 +60,6 @@ class BleTransport implements NearbyTransport {
         throw TimeoutException('BLE connect timed out after $timeout', timeout);
       }
       try {
-        // Disconnect first to ensure stale native GATT client is cleared
-        try {
-          await UniversalBle.disconnect(deviceId);
-        } catch (_) {}
-        await Future.delayed(const Duration(milliseconds: 100));
-
         final connectRemaining = deadline.difference(DateTime.now());
         if (connectRemaining <= Duration.zero) {
           throw TimeoutException('BLE connect timed out after $timeout', timeout);
@@ -103,6 +71,10 @@ class BleTransport implements NearbyTransport {
         if (attempts >= 3 || deadline.difference(DateTime.now()) <= Duration.zero) {
           rethrow;
         }
+        // Clean up stale native handle before retrying
+        try {
+          await UniversalBle.disconnect(deviceId);
+        } catch (_) {}
         await Future.delayed(Duration(milliseconds: 200 * attempts));
       }
     }
@@ -111,13 +83,11 @@ class BleTransport implements NearbyTransport {
     final transport = BleTransport._(deviceId, peerId, targetServiceUuid);
 
     try {
-      // Allow GATT connection link to stabilize across platforms
-      await Future.delayed(const Duration(milliseconds: 200));
+      // Brief stabilization before service discovery
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Discover services
       await UniversalBle.discoverServices(deviceId);
-
-      await Future.delayed(const Duration(milliseconds: 150));
 
       // Subscribe to RX characteristic notifications
       await UniversalBle.subscribeNotifications(
@@ -129,8 +99,8 @@ class BleTransport implements NearbyTransport {
       // Request MTU if possible
       try {
         final negotiatedMtu = await UniversalBle.requestMtu(deviceId, 512);
-        if (negotiatedMtu > 20) {
-          transport._mtu = negotiatedMtu - 3;
+        if (negotiatedMtu >= kBleMinMtu) {
+          transport._mtu = min(negotiatedMtu - 3, kBleMaxChunkSize);
         }
       } catch (_) {}
 
@@ -149,12 +119,12 @@ class BleTransport implements NearbyTransport {
     }
   }
 
-  Future<void> _writeQueue = Future.value();
+  @override
+  String get peerId => _peerId;
 
-  Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
-    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
-    _writeQueue = next.then((_) {}, onError: (_) {});
-    return next;
+  /// Updates the peer ID associated with this transport.
+  void updatePeerId(String peerId) {
+    _peerId = peerId;
   }
 
   Uint8List? _sessionKey;
@@ -167,19 +137,8 @@ class BleTransport implements NearbyTransport {
     _sessionKey = key;
   }
 
-  @override
-  String get peerId => _peerId;
-
-  /// Updates the peer ID associated with this transport.
-  void updatePeerId(String peerId) {
-    _peerId = peerId;
-  }
-
-  /// The underlying BLE peripheral device ID.
+  /// The remote peripheral device identifier.
   String get deviceId => _deviceId;
-
-  /// The service UUID used for GATT communication.
-  String get serviceUuid => _serviceUuid;
 
   @override
   Stream<PacketFrame> get incomingFrames => _framer.frames;
@@ -201,44 +160,18 @@ class BleTransport implements NearbyTransport {
 
   @override
   Future<void> sendRaw(Uint8List data) {
-    return _synchronizedWrite(() async {
-      if (_closed) {
-        throw StateError('Cannot send raw data on closed BLE transport');
-      }
-
-      // Chunk the data according to BLE MTU size
-      int offset = 0;
-      while (offset < data.length) {
-        if (_closed) break;
-        final int chunkSize =
-            (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
-        final Uint8List chunk = data.sublist(offset, offset + chunkSize);
-
-        int attempts = 0;
-        bool sent = false;
-        while (!sent && attempts < 8 && !_closed) {
-          attempts++;
-          try {
-            await UniversalBle.write(
-              _deviceId,
-              _serviceUuid,
-              kNearbyBleTxCharUuid,
-              chunk,
-              withoutResponse: false,
-            );
-            sent = true;
-          } catch (e) {
-            if (attempts >= 8) rethrow;
-            await Future<void>.delayed(Duration(milliseconds: 15 * attempts));
-          }
-        }
-
-        offset += chunkSize;
-        if (offset < data.length) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-      }
-    });
+    return _chunkSender.sendChunks(
+      data: data,
+      mtu: _mtu,
+      isClosed: () => _closed,
+      writeChunk: (chunk) => UniversalBle.write(
+        _deviceId,
+        _serviceUuid,
+        kNearbyBleTxCharUuid,
+        chunk,
+        withoutResponse: false,
+      ),
+    );
   }
 
   @override
@@ -246,7 +179,7 @@ class BleTransport implements NearbyTransport {
     if (_closed) return;
     _closed = true;
 
-    _activeTransports.remove(_deviceId.toLowerCase());
+    BleTransportRegistry.instance.unregisterCentral(_deviceId);
 
     try {
       await UniversalBle.disconnect(_deviceId);
@@ -263,61 +196,60 @@ class BleTransport implements NearbyTransport {
 /// BLE GATT Peripheral (Server) implementation of [NearbyTransport].
 /// Represents an active incoming connection from a remote BLE central (client).
 class BlePeripheralTransport implements NearbyTransport {
-  static final Map<String, BlePeripheralTransport> _activeTransports = {};
-  static final StreamController<BlePeripheralTransport> _incomingTransportsController =
-      StreamController<BlePeripheralTransport>.broadcast();
-
-  /// Stream of newly connected incoming BLE central transports.
-  static Stream<BlePeripheralTransport> get incomingTransports =>
-      _incomingTransportsController.stream;
-
   final String _deviceId;
   String _peerId;
   final PacketFramer _framer = PacketFramer();
   final Completer<void> _doneCompleter = Completer<void>();
+  final BleChunkSender _chunkSender = BleChunkSender();
   bool _closed = false;
-  int _mtu = 240;
+  int _mtu = kBleDefaultMtu;
 
   BlePeripheralTransport._(this._deviceId, this._peerId);
 
-  /// Retrieves or creates an active peripheral transport for an incoming central device.
-  static BlePeripheralTransport getOrCreate(String deviceId) {
-    final key = deviceId.toLowerCase();
-    var transport = _activeTransports[key];
-    if (transport == null || !transport.isConnected) {
-      transport = BlePeripheralTransport._(deviceId, 'pending');
-      _activeTransports[key] = transport;
-      _incomingTransportsController.add(transport);
-    }
-    return transport;
-  }
+  /// Internal factory for [BleTransportRegistry].
+  static BlePeripheralTransport create(String deviceId, String peerId) =>
+      BlePeripheralTransport._(deviceId, peerId);
 
-  /// Handles incoming bytes written to the TX characteristic by a remote central.
-  static void handleIncomingWrite(String deviceId, Uint8List data) {
-    final transport = getOrCreate(deviceId);
-    transport._framer.addBytes(data);
-  }
+  /// Stream of newly connected incoming BLE central transports.
+  static Stream<BlePeripheralTransport> get incomingTransports =>
+      BleTransportRegistry.instance.incomingPeripheralTransports;
+
+  /// Gets or creates a peripheral transport for a given remote central device ID.
+  static BlePeripheralTransport getOrCreate(String deviceId, [String? peerId]) =>
+      BleTransportRegistry.instance.getOrCreatePeripheral(deviceId, peerId);
+
+  /// Handles incoming data written by a remote central device.
+  static void handleIncomingWrite(String deviceId, Uint8List data) =>
+      BleTransportRegistry.instance.handlePeripheralIncomingWrite(deviceId, data);
 
   /// Handles MTU update for a connected central device.
-  static void handleMtuChanged(String deviceId, int mtu) {
-    final transport = _activeTransports[deviceId.toLowerCase()];
-    if (transport != null && mtu > 20) {
-      transport._mtu = mtu - 3;
+  static void handleMtuChanged(String deviceId, int mtu) =>
+      BleTransportRegistry.instance.handlePeripheralMtuChanged(deviceId, mtu);
+
+  /// Handles disconnection of a remote central device.
+  static void handleDisconnected(String deviceId) =>
+      BleTransportRegistry.instance.handlePeripheralDisconnected(deviceId);
+
+  /// Indicates if this transport is closed.
+  bool get isClosed => _closed;
+
+  /// Underlying packet framer instance.
+  PacketFramer get framer => _framer;
+
+  /// Marks this peripheral transport as closed from external event.
+  void markClosed() {
+    if (_closed) return;
+    _closed = true;
+    BleTransportRegistry.instance.unregisterPeripheral(_deviceId);
+    _framer.close();
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
     }
   }
 
-  /// Handles disconnection of a remote central device.
-  static void handleDisconnected(String deviceId) {
-    final transport = _activeTransports.remove(deviceId.toLowerCase());
-    transport?._markClosed();
-  }
-
-  Future<void> _writeQueue = Future.value();
-
-  Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
-    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
-    _writeQueue = next.then((_) {}, onError: (_) {});
-    return next;
+  /// Sets the negotiated MTU for this peripheral connection.
+  void setMtu(int mtu) {
+    _mtu = min(mtu - 3, kBleMaxChunkSize);
   }
 
   @override
@@ -361,57 +293,33 @@ class BlePeripheralTransport implements NearbyTransport {
 
   @override
   Future<void> sendRaw(Uint8List data) {
-    return _synchronizedWrite(() async {
-      if (_closed) {
-        throw StateError('Cannot send raw data on closed BLE peripheral transport');
-      }
-
-      // Chunk data according to MTU size and notify subscribed central on RX characteristic
-      int offset = 0;
-      while (offset < data.length) {
-        if (_closed) break;
-        final int chunkSize =
-            (data.length - offset < _mtu) ? (data.length - offset) : _mtu;
-        final Uint8List chunk = data.sublist(offset, offset + chunkSize);
-
-        int attempts = 0;
-        bool sent = false;
-        while (!sent && attempts < 8 && !_closed) {
-          attempts++;
-          try {
-            await UniversalBlePeripheral.updateCharacteristicValue(
-              characteristicId: kNearbyBleRxCharUuid,
-              value: chunk,
-              deviceId: _deviceId,
-            );
-            sent = true;
-          } catch (e) {
-            if (attempts >= 8) rethrow;
-            await Future<void>.delayed(Duration(milliseconds: 15 * attempts));
-          }
-        }
-
-        offset += chunkSize;
-        if (offset < data.length) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-      }
-    });
-  }
-
-  void _markClosed() {
-    if (_closed) return;
-    _closed = true;
-    _activeTransports.remove(_deviceId.toLowerCase());
-    unawaited(_framer.close());
-    if (!_doneCompleter.isCompleted) {
-      _doneCompleter.complete();
-    }
+    return _chunkSender.sendChunks(
+      data: data,
+      mtu: _mtu,
+      isClosed: () => _closed,
+      writeChunk: (chunk) => UniversalBlePeripheral.updateCharacteristicValue(
+        characteristicId: kNearbyBleRxCharUuid,
+        value: chunk,
+        deviceId: _deviceId,
+      ),
+    );
   }
 
   @override
   Future<void> close() async {
-    _markClosed();
+    if (_closed) return;
+    _closed = true;
+
+    BleTransportRegistry.instance.unregisterPeripheral(_deviceId);
+
+    try {
+      await UniversalBle.disconnect(_deviceId);
+    } catch (_) {}
+
+    await _framer.close();
+
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
+    }
   }
 }
-

@@ -189,7 +189,7 @@ class NearbyService {
   Future<bool> requestConnection(
     Peer peer, {
     Map<String, String> metadata = const {},
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     NearbyTransport transport;
 
