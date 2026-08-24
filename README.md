@@ -1,8 +1,8 @@
 # nearby
 
-A high-performance, cross-platform peer-to-peer networking plugin for Flutter — offering functionality equivalent to **Apple's Multipeer Connectivity** and **Google's Nearby Connections API**.
+Cross-platform peer-to-peer networking for Flutter — bringing the power of Apple's Multipeer Connectivity and Google's Nearby Connections seamlessly across mobile and desktop.
 
-Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/packages/bonsoir)** (mDNS / Bonjour) and **[Universal BLE](https://pub.dev/packages/universal_ble)** (Bluetooth Low Energy). No native plugin code required on top of those dependencies.
+Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/packages/bonsoir)** (mDNS / Bonjour) and **[Universal BLE](https://pub.dev/packages/universal_ble)** (Bluetooth Low Energy).
 
 <p align="center">
   <img src="doc/screenshot.jpg" alt="Nearby Cross-Platform Sync Demo" width="800"/>
