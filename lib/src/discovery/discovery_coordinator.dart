@@ -10,6 +10,9 @@ class DiscoveryCoordinator {
   final BonsoirDiscoveryService _bonsoir = BonsoirDiscoveryService();
   final BleDiscoveryService _ble = BleDiscoveryService();
 
+  /// Peer ID of the local device, used to filter out self-discovery.
+  String? localPeerId;
+
   final Map<String, Peer> _discoveredPeers = {};
   final Map<String, Set<DiscoveryMedium>> _peerActiveMediums = {};
   Timer? _pruneTimer;
@@ -43,6 +46,7 @@ class DiscoveryCoordinator {
     required AdvertisingOptions options,
     required int tcpPort,
   }) async {
+    localPeerId = peerId;
     final strategy = options.strategy;
 
     if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.mdnsOnly) {
@@ -74,9 +78,13 @@ class DiscoveryCoordinator {
   /// Starts discovery on selected transport mediums based on [DiscoveryOptions].
   Future<void> startDiscovery({
     required DiscoveryOptions options,
+    String? localPeerId,
     Duration pruneInterval = const Duration(seconds: 10),
     Duration peerTimeout = const Duration(seconds: 25),
   }) async {
+    if (localPeerId != null) {
+      this.localPeerId = localPeerId;
+    }
     await stopDiscovery();
     _discoveredPeers.clear();
     _peerActiveMediums.clear();
@@ -132,6 +140,11 @@ class DiscoveryCoordinator {
   }
 
   void _handlePeerFound(Peer incoming, DiscoveryOptions options) {
+    // Ignore self-discovery
+    if (localPeerId != null && incoming.id == localPeerId) {
+      return;
+    }
+
     // Check metadata filter if configured
     if (options.metadataFilter != null) {
       for (final filterEntry in options.metadataFilter!.entries) {

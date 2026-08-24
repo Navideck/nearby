@@ -64,7 +64,9 @@ class NearbyService {
     String? localDisplayName,
     this.storageDirectory,
   })  : localPeerId = localPeerId ?? _generateRandomId(),
-        localDisplayName = localDisplayName ?? Platform.localHostname;
+        localDisplayName = localDisplayName ?? Platform.localHostname {
+    _discoveryCoordinator.localPeerId = this.localPeerId;
+  }
 
   static String _generateRandomId() {
     final rand = Random.secure();
@@ -168,7 +170,10 @@ class NearbyService {
     await stopDiscovery();
     _currentDiscoveryOptions = options;
     try {
-      await _discoveryCoordinator.startDiscovery(options: options);
+      await _discoveryCoordinator.startDiscovery(
+        options: options,
+        localPeerId: localPeerId,
+      );
       _isDiscovering = true;
     } catch (e) {
       await stopDiscovery();
