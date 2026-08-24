@@ -236,6 +236,12 @@ class NearbySession {
       case FrameType.payloadChunk:
       case FrameType.payloadAck:
       case FrameType.payloadCancel:
+        if (_state != PeerConnectionState.connected) {
+          await disconnect(
+            reason: 'Payload received before handshake completed',
+          );
+          break;
+        }
         await payloadManager.handleIncomingFrame(
           peerId: peer.id,
           frame: frame,
