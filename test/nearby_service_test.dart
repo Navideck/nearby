@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
+import 'package:nearby/src/discovery/ble_discovery.dart';
 import 'package:nearby/src/discovery/discovery_coordinator.dart';
 
 class MockSessionTransport implements NearbyTransport {
@@ -261,7 +262,7 @@ void main() {
     );
   });
 
-  group('DiscoveryCoordinator Tests', () {
+    group('DiscoveryCoordinator Tests', () {
     test(
       'Ignores self-discovery when incoming peer ID matches localPeerId',
       () {
@@ -272,5 +273,46 @@ void main() {
         expect(coordinator.currentPeers, isEmpty);
       },
     );
+  });
+
+  group('BleDiscoveryService Manufacturer Payload Tests', () {
+    test('Uses JSON payload when within 27-byte limit', () {
+      final payload = BleDiscoveryService.createManufacturerPayload(
+        peerId: 'peer_1',
+        serviceId: 's1',
+      );
+
+      expect(payload.length, lessThanOrEqualTo(27));
+      final decoded = String.fromCharCodes(payload);
+      expect(decoded.startsWith('{'), isTrue);
+      expect(decoded, contains('"id":"peer_1"'));
+      expect(decoded, contains('"sid":"s1"'));
+    });
+
+    test('Falls back to compact binary format when JSON exceeds 27 bytes', () {
+      final payload = BleDiscoveryService.createManufacturerPayload(
+        peerId: '8c17b5e43a9f1a2b',
+        serviceId: 'nearby-default-service',
+        metadata: {'role': 'presenter'},
+      );
+
+      expect(payload.length, lessThanOrEqualTo(27));
+      expect(payload.first, equals(0x01));
+      final peerId = String.fromCharCodes(payload.sublist(1));
+      expect(peerId, equals('8c17b5e43a9f1a2b'));
+    });
+
+    test('Bounds long peer IDs to strictly 26 characters in compact fallback', () {
+      final longId = 'a' * 60;
+      final payload = BleDiscoveryService.createManufacturerPayload(
+        peerId: longId,
+        serviceId: 'nearby-service',
+      );
+
+      expect(payload.length, equals(27));
+      expect(payload.first, equals(0x01));
+      expect(payload.sublist(1).length, equals(26));
+      expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
+    });
   });
 }
