@@ -551,8 +551,8 @@ packages:
     dependency: "direct overridden"
     description:
       path: "."
-      ref: add-queue-to-universal-ble-peripheral
-      resolved-ref: f2f2f9e1931c74f8157d08ede2cf692167e004be
+      ref: HEAD
+      resolved-ref: "27fc7d1e83da4c752f4437b7a83e17953e3d9e87"
       url: "https://github.com/Navideck/universal_ble.git"
     source: git
     version: "2.2.0"

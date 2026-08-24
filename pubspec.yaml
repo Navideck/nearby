@@ -24,7 +24,6 @@ dependency_overrides:
   universal_ble:
     git:
       url: https://github.com/Navideck/universal_ble.git
-      ref: add-queue-to-universal-ble-peripheral
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
