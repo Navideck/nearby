@@ -140,6 +140,32 @@ class BleDiscoveryService {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}'.toLowerCase();
   }
 
+  StreamSubscription? _advertisingStateSub;
+
+  /// Encodes manufacturer data payload for BLE advertising.
+  /// Uses JSON if it fits within the 27-byte limit (31 bytes max legacy scan response - 4 bytes header),
+  /// preserving serviceId and metadata for discovery filtering.
+  /// Falls back to a compact binary payload (`0x01` + bounded peerId) if the JSON exceeds 27 bytes.
+  static Uint8List createManufacturerPayload({
+    required String peerId,
+    String? serviceId,
+    Map<String, String> metadata = const {},
+  }) {
+    final payloadMap = {
+      'id': peerId,
+      if (serviceId != null && serviceId.isNotEmpty) 'sid': serviceId,
+      if (metadata.isNotEmpty) 'meta': metadata,
+    };
+    final jsonBytes = Uint8List.fromList(utf8.encode(jsonEncode(payloadMap)));
+    if (jsonBytes.length <= 27) {
+      return jsonBytes;
+    }
+
+    final boundedPeerId =
+        peerId.length > 26 ? peerId.substring(0, 26) : peerId;
+    return Uint8List.fromList([0x01, ...utf8.encode(boundedPeerId)]);
+  }
+
   /// Starts BLE peripheral advertising and sets up GATT server characteristics.
   Future<void> startAdvertising({
     required String peerId,
@@ -156,16 +182,14 @@ class BleDiscoveryService {
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
 
-    // Encode peer ID, service ID, and metadata into manufacturer payload
-    final payloadMap = {
-      'id': peerId,
-      'sid': ?serviceId,
-      if (metadata.isNotEmpty) 'meta': metadata,
-    };
-    final String jsonStr = jsonEncode(payloadMap);
-    final Uint8List mfgData = Uint8List.fromList(utf8.encode(jsonStr));
+    // Manufacturer payload capped at 27 bytes to strictly avoid BLE scan response overflow
+    final mfgData = createManufacturerPayload(
+      peerId: peerId,
+      serviceId: serviceId,
+      metadata: metadata,
+    );
 
-    // Truncate name if necessary to fit legacy BLE advertising packet limits (31 bytes)
+    // Truncate name if necessary to fit BLE advertising packet limits
     final truncatedName = displayName.length > 14
         ? displayName.substring(0, 14)
         : displayName;
@@ -219,6 +243,13 @@ class BleDiscoveryService {
         BlePeripheralTransport.handleMtuChanged(event.deviceId, event.mtu.toInt());
       });
 
+      _advertisingStateSub =
+          UniversalBlePeripheral.advertisingStateStream.listen((event) {
+        if (event.state == PeripheralAdvertisingState.error) {
+          debugPrint('UniversalBle BLE Advertising Error: ${event.error}');
+        }
+      });
+
       // Set up GATT Server service and characteristics
       final service = BlePeripheralService(
         uuid: targetUuid,
@@ -249,10 +280,16 @@ class BleDiscoveryService {
       await UniversalBlePeripheral.clearServices();
       await UniversalBlePeripheral.addService(service);
 
-      // Peripheral advertising via universal_ble
+      // On Android, including device name in primary packet alongside a 128-bit UUID
+      // exceeds the legacy 31-byte advertising packet limit (18 UUID + 3 flags + 2+name > 31)
+      // causing ADVERTISE_FAILED_DATA_TOO_LARGE. Setting localName to null on Android
+      // avoids this overflow; the full name is exchanged during handshake.
+      final advertiseLocalName =
+          defaultTargetPlatform == TargetPlatform.android ? null : truncatedName;
+
       await UniversalBlePeripheral.startAdvertising(
         services: [targetUuid],
-        localName: truncatedName,
+        localName: advertiseLocalName,
         manufacturerData: ManufacturerData(0xFFFF, mfgData),
         platformConfig: PeripheralPlatformConfig(
           android: PeripheralAndroidOptions(
@@ -273,6 +310,8 @@ class BleDiscoveryService {
     _connectionStateSub = null;
     await _mtuSub?.cancel();
     _mtuSub = null;
+    await _advertisingStateSub?.cancel();
+    _advertisingStateSub = null;
 
     try {
       await UniversalBlePeripheral.stopAdvertising();
