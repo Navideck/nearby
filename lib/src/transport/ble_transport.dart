@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:universal_ble/universal_ble.dart';
+
 import '../protocol/packet_framer.dart';
 import 'ble/ble_chunk_sender.dart';
 import 'ble/ble_constants.dart';
@@ -23,7 +25,11 @@ class BleTransport implements NearbyTransport {
   bool _closed = false;
   int _mtu = kBleDefaultMtu;
 
-  BleTransport._(this._deviceId, this._peerId, [this._serviceUuid = kNearbyBleServiceUuid]) {
+  BleTransport._(
+    this._deviceId,
+    this._peerId, [
+    this._serviceUuid = kNearbyBleServiceUuid,
+  ]) {
     BleTransportRegistry.instance.registerCentral(_deviceId, this);
   }
 
@@ -47,9 +53,6 @@ class BleTransport implements NearbyTransport {
       await UniversalBle.stopScan();
     } catch (_) {}
 
-    // Give Bluetooth controller brief transition window from scanning to connecting mode
-    await Future.delayed(const Duration(milliseconds: 100));
-
     // 2. Connect with overall deadline retry
     final deadline = DateTime.now().add(timeout);
     int attempts = 0;
@@ -62,20 +65,20 @@ class BleTransport implements NearbyTransport {
       try {
         final connectRemaining = deadline.difference(DateTime.now());
         if (connectRemaining <= Duration.zero) {
-          throw TimeoutException('BLE connect timed out after $timeout', timeout);
+          throw TimeoutException(
+            'BLE connect timed out after $timeout',
+            timeout,
+          );
         }
 
         await UniversalBle.connect(deviceId).timeout(connectRemaining);
         break;
       } catch (e) {
-        if (attempts >= 3 || deadline.difference(DateTime.now()) <= Duration.zero) {
+        if (attempts >= 3 ||
+            deadline.difference(DateTime.now()) <= Duration.zero) {
           rethrow;
         }
-        // Clean up stale native handle before retrying
-        try {
-          await UniversalBle.disconnect(deviceId);
-        } catch (_) {}
-        await Future.delayed(Duration(milliseconds: 200 * attempts));
+        await UniversalBle.disconnect(deviceId);
       }
     }
 
@@ -83,9 +86,6 @@ class BleTransport implements NearbyTransport {
     final transport = BleTransport._(deviceId, peerId, targetServiceUuid);
 
     try {
-      // Brief stabilization before service discovery
-      await Future.delayed(const Duration(milliseconds: 100));
-
       // Discover services
       await UniversalBle.discoverServices(deviceId);
 
@@ -215,12 +215,17 @@ class BlePeripheralTransport implements NearbyTransport {
       BleTransportRegistry.instance.incomingPeripheralTransports;
 
   /// Gets or creates a peripheral transport for a given remote central device ID.
-  static BlePeripheralTransport getOrCreate(String deviceId, [String? peerId]) =>
-      BleTransportRegistry.instance.getOrCreatePeripheral(deviceId, peerId);
+  static BlePeripheralTransport getOrCreate(
+    String deviceId, [
+    String? peerId,
+  ]) => BleTransportRegistry.instance.getOrCreatePeripheral(deviceId, peerId);
 
   /// Handles incoming data written by a remote central device.
   static void handleIncomingWrite(String deviceId, Uint8List data) =>
-      BleTransportRegistry.instance.handlePeripheralIncomingWrite(deviceId, data);
+      BleTransportRegistry.instance.handlePeripheralIncomingWrite(
+        deviceId,
+        data,
+      );
 
   /// Handles MTU update for a connected central device.
   static void handleMtuChanged(String deviceId, int mtu) =>
