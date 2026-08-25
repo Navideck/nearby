@@ -33,9 +33,7 @@ class BonsoirDiscoveryService {
       'port': port.toString(),
     };
 
-    final formattedType = serviceType.startsWith('_')
-        ? (serviceType.endsWith('._tcp') ? serviceType : '$serviceType._tcp')
-        : '_$serviceType._tcp';
+    final formattedType = formatServiceType(serviceType);
 
     final service = BonsoirService(
       name: '$displayName-$peerId',
@@ -63,9 +61,7 @@ class BonsoirDiscoveryService {
   }) async {
     await stopBrowsing();
 
-    final formattedType = serviceType.startsWith('_')
-        ? (serviceType.endsWith('._tcp') ? serviceType : '$serviceType._tcp')
-        : '_$serviceType._tcp';
+    final formattedType = formatServiceType(serviceType);
 
     _discovery = BonsoirDiscovery(type: formattedType);
     await _discovery!.initialize();
@@ -128,4 +124,29 @@ class BonsoirDiscoveryService {
     await _peerFoundController.close();
     await _peerLostController.close();
   }
+
+  /// Normalizes a service ID into a fully-qualified Bonjour service type.
+  ///
+  /// Accepts:
+  /// - Fully-qualified types like `_navideck-tc._udp` or `_navideck-tc._tcp`
+  ///   (returned as-is; protocol matching is case-insensitive).
+  /// - Short names like `navideck-tc` (expanded to `_navideck-tc._tcp`).
+  static String formatServiceType(String serviceType) {
+    // Already fully-qualified (starts with `_` and contains `._tcp` or `._udp`)
+    // — never append another protocol suffix. mDNS labels are case-insensitive
+    // (RFC 6763), so compare against the lowercased form but preserve the
+    // caller's original casing.
+    final normalized = serviceType.toLowerCase();
+    if (normalized.startsWith('_') &&
+        (normalized.contains('._tcp') || normalized.contains('._udp'))) {
+      return serviceType;
+    }
+    // Starts with underscore but missing protocol suffix — default to ._tcp
+    if (serviceType.startsWith('_')) {
+      return '$serviceType._tcp';
+    }
+    // Plain name — prepend underscore and append ._tcp
+    return '_$serviceType._tcp';
+  }
+
 }
