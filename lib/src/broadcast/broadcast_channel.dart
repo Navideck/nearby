@@ -287,6 +287,11 @@ class BroadcastChannel {
       attempts++;
     }
 
+    if (_bleAdvertising) {
+      try {
+        await UniversalBlePeripheral.stopAdvertising();
+      } catch (_) {}
+    }
     _bleAdvertising = true;
     await UniversalBlePeripheral.startAdvertising(
       services: [targetUuid],
