@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
+
 import '../discovery/ble_discovery.dart';
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
-import '../transport/ble_transport.dart';
 import 'broadcast_packet.dart';
 
 /// Configuration for a [BroadcastChannel].
@@ -64,10 +65,9 @@ class BroadcastChannel {
   bool _bleAdvertising = false;
   String? _targetBleUuid;
 
-  BroadcastChannel({
-    required this.config,
-  }) {
-    _targetBleUuid = config.bleServiceUuid ??
+  BroadcastChannel({required this.config}) {
+    _targetBleUuid =
+        config.bleServiceUuid ??
         BleDiscoveryService.generateServiceUuid(config.channelId);
   }
 
@@ -262,14 +262,18 @@ class BroadcastChannel {
 
   // --- BLE Internal Implementation ---
 
-  Future<void> _updateBleAdvertisement(Uint8List data, {String? localName}) async {
+  Future<void> _updateBleAdvertisement(
+    Uint8List data, {
+    String? localName,
+  }) async {
     final targetUuid = _targetBleUuid!;
     final truncatedName = localName != null && localName.length > 18
         ? localName.substring(0, 18)
         : localName;
 
-    final advertiseLocalName =
-        defaultTargetPlatform == TargetPlatform.android ? null : truncatedName;
+    final advertiseLocalName = defaultTargetPlatform == TargetPlatform.android
+        ? null
+        : truncatedName;
 
     _bleAdvertising = true;
     await UniversalBlePeripheral.startAdvertising(
@@ -309,7 +313,9 @@ class BroadcastChannel {
     }
 
     // 2. Check local name payload fallback
-    if (payload == null && config.bleLocalNamePrefix != null && device.name != null) {
+    if (payload == null &&
+        config.bleLocalNamePrefix != null &&
+        device.name != null) {
       if (device.name!.startsWith(config.bleLocalNamePrefix!)) {
         final raw = device.name!.substring(config.bleLocalNamePrefix!.length);
         try {
