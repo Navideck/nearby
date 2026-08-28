@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'broadcast/broadcast_channel.dart';
+import 'broadcast/broadcast_packet.dart';
 import 'discovery/ble_discovery.dart';
 import 'discovery/discovery_coordinator.dart';
 import 'models/connection_request.dart';
@@ -58,6 +60,8 @@ class NearbyService {
   int _pendingHandshakeCount = 0;
   AdvertisingOptions? _currentAdvertisingOptions;
   DiscoveryOptions? _currentDiscoveryOptions;
+  final List<BroadcastChannel> _broadcastChannels = [];
+  BroadcastChannel? _defaultBroadcastChannel;
 
   NearbyService({
     String? localPeerId,
@@ -73,6 +77,49 @@ class NearbyService {
     final bytes = List<int>.generate(8, (_) => rand.nextInt(256));
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
+
+  // --- Broadcast Channels (Connectionless 1:Many) ---
+
+  /// List of currently active broadcast channels created via [createBroadcastChannel].
+  List<BroadcastChannel> get activeBroadcastChannels =>
+      List.unmodifiable(_broadcastChannels);
+
+  /// Default broadcast channel for convenience broadcast operations.
+  BroadcastChannel get defaultBroadcastChannel =>
+      _defaultBroadcastChannel ??= createBroadcastChannel(
+        const BroadcastChannelConfig(
+          channelId: 'nearby-default',
+          strategy: DiscoveryStrategy.hybrid,
+        ),
+      );
+
+  /// Creates and registers a dedicated [BroadcastChannel] managed by this service.
+  BroadcastChannel createBroadcastChannel(BroadcastChannelConfig config) {
+    final channel = BroadcastChannel(config: config);
+    _broadcastChannels.add(channel);
+    return channel;
+  }
+
+  /// Broadcasts a raw datagram to all listeners on the default or specified channel.
+  Future<void> broadcast(
+    Uint8List data, {
+    String? channelId,
+    String? localName,
+  }) async {
+    final channel = channelId != null
+        ? _broadcastChannels.firstWhere(
+            (c) => c.config.channelId == channelId,
+            orElse: () => createBroadcastChannel(
+              BroadcastChannelConfig(channelId: channelId),
+            ),
+          )
+        : defaultBroadcastChannel;
+    await channel.send(data, localName: localName);
+  }
+
+  /// Stream of broadcast packets received on the default broadcast channel.
+  Stream<BroadcastPacket> get onBroadcastReceived =>
+      defaultBroadcastChannel.stream;
 
   // --- Status Getters ---
 
@@ -568,6 +615,11 @@ class NearbyService {
     await stopAdvertising();
     await stopDiscovery();
     await disconnectAll();
+    for (final channel in List.of(_broadcastChannels)) {
+      await channel.dispose();
+    }
+    _broadcastChannels.clear();
+    _defaultBroadcastChannel = null;
     await _discoveryCoordinator.dispose();
     await _payloadManager.dispose();
     await _connectionRequestController.close();

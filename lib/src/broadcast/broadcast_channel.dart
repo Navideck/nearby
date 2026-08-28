@@ -1,37 +1,36 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
-
 import '../discovery/ble_discovery.dart';
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
+import '../transport/ble/ble_scan_dispatcher.dart';
+import '../transport/ble_transport.dart';
 import 'broadcast_packet.dart';
 
-/// Configuration options for connectionless UDP multicast and BLE broadcast channels.
+/// Configuration for a [BroadcastChannel].
 class BroadcastChannelConfig {
-  /// Unique identifier for this channel (e.g. 'timecode').
+  /// Unique identifier/namespace for this broadcast channel.
   final String channelId;
 
-  /// Transport strategy (hybrid, mdnsOnly/network, or bleOnly).
+  /// Transport strategy (BLE-only, mDNS/Multicast-only, or Hybrid).
   final DiscoveryStrategy strategy;
 
-  /// Multicast group IPv4 address for network broadcasting.
+  /// UDP multicast IP address (default: 239.255.0.1).
   final String multicastAddress;
 
-  /// Multicast UDP port for network broadcasting.
+  /// UDP multicast port (default: 9876).
   final int multicastPort;
 
-  /// Optional custom BLE service UUID. Defaults to deterministic UUID generated from [channelId].
+  /// Custom BLE service UUID. If null, derived deterministically from [channelId].
   final String? bleServiceUuid;
 
-  /// Manufacturer Company ID for BLE advertisements. Defaults to 0xFFFF.
+  /// BLE manufacturer company ID (default: 0xFFFF).
   final int bleCompanyId;
 
-  /// Optional prefix used in BLE Local Name advertisements for backwards compatibility or carrier payloads.
+  /// Optional prefix in local name for carrier fallback.
   final String? bleLocalNamePrefix;
 
   const BroadcastChannelConfig({
@@ -45,7 +44,8 @@ class BroadcastChannelConfig {
   });
 }
 
-/// Generic connectionless broadcaster and listener supporting both UDP multicast and BLE advertisements.
+/// Generic connectionless broadcast channel supporting high-frequency
+/// UDP multicast and Bluetooth Low Energy advertisement updates.
 class BroadcastChannel {
   final BroadcastChannelConfig config;
   final StreamController<BroadcastPacket> _packetController =
@@ -93,7 +93,7 @@ class BroadcastChannel {
     }
   }
 
-  /// Sends a data packet to all broadcast listeners across enabled transports.
+  /// Sends a raw data packet to all broadcast listeners across enabled transports.
   Future<void> send(Uint8List data, {String? localName}) async {
     if (!_isBroadcasting) {
       await startBroadcasting();
@@ -152,6 +152,7 @@ class BroadcastChannel {
 
   /// Stops listening for broadcast packets.
   Future<void> stopListening() async {
+    if (!_isListening) return;
     _isListening = false;
 
     if (_listenSocketSub != null) {
@@ -167,9 +168,7 @@ class BroadcastChannel {
 
     if (_bleScanning) {
       _bleScanning = false;
-      try {
-        await UniversalBle.stopScan();
-      } catch (_) {}
+      await BleScanDispatcher.instance.removeListener(_handleBleScanResult);
     }
   }
 
@@ -289,57 +288,53 @@ class BroadcastChannel {
     _bleScanning = true;
     final targetUuid = _targetBleUuid!;
 
-    UniversalBle.onScanResult = (BleDevice device) {
-      if (!_bleScanning) return;
+    await BleScanDispatcher.instance.addListener(
+      _handleBleScanResult,
+      scanFilter: ScanFilter(withServices: [targetUuid]),
+    );
+  }
 
-      Uint8List? payload;
+  void _handleBleScanResult(BleDevice device) {
+    if (!_bleScanning || _targetBleUuid == null) return;
+    final targetUuid = _targetBleUuid!;
 
-      // 1. Check manufacturer data
-      for (final mfg in device.manufacturerDataList) {
-        if (mfg.companyId == config.bleCompanyId && mfg.payload.isNotEmpty) {
-          payload = mfg.payload;
-          break;
-        }
+    Uint8List? payload;
+
+    // 1. Check manufacturer data
+    for (final mfg in device.manufacturerDataList) {
+      if (mfg.companyId == config.bleCompanyId && mfg.payload.isNotEmpty) {
+        payload = mfg.payload;
+        break;
       }
+    }
 
-      // 2. Check local name payload fallback
-      if (payload == null && config.bleLocalNamePrefix != null && device.name != null) {
-        if (device.name!.startsWith(config.bleLocalNamePrefix!)) {
-          final raw = device.name!.substring(config.bleLocalNamePrefix!.length);
-          try {
-            payload = base64Url.decode(base64.normalize(raw));
-          } catch (_) {}
-        }
+    // 2. Check local name payload fallback
+    if (payload == null && config.bleLocalNamePrefix != null && device.name != null) {
+      if (device.name!.startsWith(config.bleLocalNamePrefix!)) {
+        final raw = device.name!.substring(config.bleLocalNamePrefix!.length);
+        try {
+          payload = base64Url.decode(base64.normalize(raw));
+        } catch (_) {}
       }
+    }
 
-      // 3. Check service match
-      final matchesService = device.services.any(
-        (s) => BleUuidParser.compareStrings(s, targetUuid),
+    // 3. Check service match
+    final matchesService = device.services.any(
+      (s) => BleUuidParser.compareStrings(s, targetUuid),
+    );
+
+    if (payload != null || matchesService) {
+      final packet = BroadcastPacket(
+        data: payload ?? Uint8List(0),
+        senderId: device.deviceId,
+        medium: DiscoveryMedium.ble,
+        receivedAt: DateTime.now(),
+        deviceName: device.name,
+        rssi: device.rssi,
       );
-
-      if (payload != null || matchesService) {
-        final packet = BroadcastPacket(
-          data: payload ?? Uint8List(0),
-          senderId: device.deviceId,
-          medium: DiscoveryMedium.ble,
-          receivedAt: DateTime.now(),
-          deviceName: device.name,
-          rssi: device.rssi,
-        );
-        if (!_packetController.isClosed) {
-          _packetController.add(packet);
-        }
+      if (!_packetController.isClosed) {
+        _packetController.add(packet);
       }
-    };
-
-    try {
-      await UniversalBle.startScan(
-        scanFilter: ScanFilter(withServices: [targetUuid]),
-      );
-    } catch (_) {
-      try {
-        await UniversalBle.startScan();
-      } catch (_) {}
     }
   }
 

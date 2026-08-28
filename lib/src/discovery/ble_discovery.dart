@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 import '../models/peer.dart';
+import '../transport/ble/ble_scan_dispatcher.dart';
 import '../transport/ble_transport.dart';
 
 /// Bluetooth Low Energy (BLE) discovery and GATT service host using UniversalBle.
@@ -18,6 +19,9 @@ class BleDiscoveryService {
   bool _isAdvertising = false;
   StreamSubscription? _connectionStateSub;
   StreamSubscription? _mtuSub;
+
+  String? _currentTargetUuid;
+  String? _currentServiceId;
 
   bool get isScanning => _isScanning;
   bool get isAdvertising => _isAdvertising;
@@ -36,87 +40,90 @@ class BleDiscoveryService {
   }) async {
     await stopScanning();
     _isScanning = true;
+    _currentServiceId = serviceId;
 
-    final targetUuid = serviceUuid ??
+    _currentTargetUuid = serviceUuid ??
         (serviceId != null
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
 
-    UniversalBle.onScanResult = (BleDevice device) {
-      if (!_isScanning) return;
-
-      // Check if device matches target service UUID or has manufacturer data with Nearby company ID (0xFFFF)
-      final hasService = device.services.any(
-        (s) => BleUuidParser.compareStrings(s, targetUuid),
-      );
-      final hasMfg =
-          device.manufacturerDataList.any((m) => m.companyId == 0xFFFF);
-
-      // Filter out unrelated BLE devices in the environment
-      if (!hasService && !hasMfg) return;
-
-      String? peerId;
-      String? advertisedSid;
-      Map<String, String> metadata = const {};
-      final mfgList = device.manufacturerDataList;
-      if (mfgList.isNotEmpty) {
-        for (final mfg in mfgList) {
-          if (mfg.payload.isNotEmpty) {
-            try {
-              final decoded = utf8.decode(mfg.payload, allowMalformed: true);
-              if (decoded.startsWith('{')) {
-                final map = jsonDecode(decoded) as Map<String, dynamic>;
-                peerId = map['id']?.toString();
-                advertisedSid = map['sid']?.toString();
-                if (map['meta'] is Map) {
-                  metadata = (map['meta'] as Map).map(
-                    (k, v) => MapEntry(k.toString(), v.toString()),
-                  );
-                }
-              } else if (mfg.payload[0] == 0x01 && mfg.payload.length > 1) {
-                peerId = utf8.decode(mfg.payload.sublist(1), allowMalformed: true);
-              } else if (decoded.trim().isNotEmpty) {
-                peerId = decoded.trim();
-              }
-            } catch (_) {}
-          }
-        }
-      }
-
-      // Enforce serviceId filtering if configured
-      if (serviceId != null && advertisedSid != null && advertisedSid != serviceId) {
-        return;
-      }
-
-      peerId ??= device.deviceId;
-      final name = device.name;
-      final displayName = (name != null && name.trim().isNotEmpty)
-          ? name.trim()
-          : 'BLE Device (${device.deviceId.substring(0, min(6, device.deviceId.length))})';
-
-      final peer = Peer(
-        id: peerId,
-        displayName: displayName,
-        metadata: metadata,
-        discoveredVia: DiscoveryMedium.ble,
-        bleDeviceId: device.deviceId,
-        serviceUuid: targetUuid,
-        rssi: device.rssi,
-        lastSeen: DateTime.now(),
-      );
-
-      _peerFoundController.add(peer);
-    };
-
     final scanFilter = ScanFilter(
-      withServices: [targetUuid],
+      withServices: [_currentTargetUuid!],
     );
 
-    try {
-      await UniversalBle.startScan(scanFilter: scanFilter);
-    } catch (_) {
-      // Fallback to unscoped scan if service filter fails on certain platforms
-      await UniversalBle.startScan();
+    await BleScanDispatcher.instance.addListener(
+      _handleScanResult,
+      scanFilter: scanFilter,
+    );
+  }
+
+  void _handleScanResult(BleDevice device) {
+    if (!_isScanning || _currentTargetUuid == null) return;
+    final targetUuid = _currentTargetUuid!;
+    final serviceId = _currentServiceId;
+
+    // Check if device matches target service UUID or has manufacturer data with Nearby company ID (0xFFFF)
+    final hasService = device.services.any(
+      (s) => BleUuidParser.compareStrings(s, targetUuid),
+    );
+    final hasMfg =
+        device.manufacturerDataList.any((m) => m.companyId == 0xFFFF);
+
+    // Filter out unrelated BLE devices in the environment
+    if (!hasService && !hasMfg) return;
+
+    String? peerId;
+    String? advertisedSid;
+    Map<String, String> metadata = const {};
+    final mfgList = device.manufacturerDataList;
+    if (mfgList.isNotEmpty) {
+      for (final mfg in mfgList) {
+        if (mfg.payload.isNotEmpty) {
+          try {
+            final decoded = utf8.decode(mfg.payload, allowMalformed: true);
+            if (decoded.startsWith('{')) {
+              final map = jsonDecode(decoded) as Map<String, dynamic>;
+              peerId = map['id']?.toString();
+              advertisedSid = map['sid']?.toString();
+              if (map['meta'] is Map) {
+                metadata = (map['meta'] as Map).map(
+                  (k, v) => MapEntry(k.toString(), v.toString()),
+                );
+              }
+            } else if (mfg.payload[0] == 0x01 && mfg.payload.length > 1) {
+              peerId = utf8.decode(mfg.payload.sublist(1), allowMalformed: true);
+            } else if (decoded.trim().isNotEmpty) {
+              peerId = decoded.trim();
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    // Enforce serviceId filtering if configured
+    if (serviceId != null && advertisedSid != null && advertisedSid != serviceId) {
+      return;
+    }
+
+    peerId ??= device.deviceId;
+    final name = device.name;
+    final displayName = (name != null && name.trim().isNotEmpty)
+        ? name.trim()
+        : 'BLE Device (${device.deviceId.substring(0, min(6, device.deviceId.length))})';
+
+    final peer = Peer(
+      id: peerId,
+      displayName: displayName,
+      metadata: metadata,
+      discoveredVia: DiscoveryMedium.ble,
+      bleDeviceId: device.deviceId,
+      serviceUuid: targetUuid,
+      rssi: device.rssi,
+      lastSeen: DateTime.now(),
+    );
+
+    if (!_peerFoundController.isClosed) {
+      _peerFoundController.add(peer);
     }
   }
 
@@ -124,9 +131,7 @@ class BleDiscoveryService {
   Future<void> stopScanning() async {
     if (_isScanning) {
       _isScanning = false;
-      try {
-        await UniversalBle.stopScan();
-      } catch (_) {}
+      await BleScanDispatcher.instance.removeListener(_handleScanResult);
     }
   }
 
@@ -280,10 +285,6 @@ class BleDiscoveryService {
       await UniversalBlePeripheral.clearServices();
       await UniversalBlePeripheral.addService(service);
 
-      // On Android, including device name in primary packet alongside a 128-bit UUID
-      // exceeds the legacy 31-byte advertising packet limit (18 UUID + 3 flags + 2+name > 31)
-      // causing ADVERTISE_FAILED_DATA_TOO_LARGE. Setting localName to null on Android
-      // avoids this overflow; the full name is exchanged during handshake.
       final advertiseLocalName =
           defaultTargetPlatform == TargetPlatform.android ? null : truncatedName;
 
@@ -327,4 +328,3 @@ class BleDiscoveryService {
     await _peerLostController.close();
   }
 }
-

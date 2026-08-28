@@ -315,4 +315,35 @@ void main() {
       expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
     });
   });
+
+  group('NearbyService Broadcast Channel Integration Tests', () {
+    test('createBroadcastChannel creates and tracks managed channels', () async {
+      final service = NearbyService(localPeerId: 'test_node', localDisplayName: 'Node 1');
+      expect(service.activeBroadcastChannels, isEmpty);
+
+      final channel = service.createBroadcastChannel(
+        const BroadcastChannelConfig(
+          channelId: 'custom-ch',
+          strategy: DiscoveryStrategy.hybrid,
+        ),
+      );
+
+      expect(service.activeBroadcastChannels.length, 1);
+      expect(service.activeBroadcastChannels.first, equals(channel));
+      expect(channel.config.channelId, equals('custom-ch'));
+
+      await service.dispose();
+      expect(service.activeBroadcastChannels, isEmpty);
+    });
+
+    test('defaultBroadcastChannel exposes convenience broadcast and stream', () async {
+      final service = NearbyService(localPeerId: 'test_node', localDisplayName: 'Node 1');
+      final channel = service.defaultBroadcastChannel;
+      expect(channel, isNotNull);
+      expect(channel.config.channelId, equals('nearby-default'));
+      expect(service.onBroadcastReceived, isNotNull);
+
+      await service.dispose();
+    });
+  });
 }
