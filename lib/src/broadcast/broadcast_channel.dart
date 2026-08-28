@@ -267,8 +267,8 @@ class BroadcastChannel {
     String? localName,
   }) async {
     final targetUuid = _targetBleUuid!;
-    final truncatedName = localName != null && localName.length > 18
-        ? localName.substring(0, 18)
+    final truncatedName = localName != null && localName.length > 26
+        ? localName.substring(0, 26)
         : localName;
 
     final advertiseLocalName = defaultTargetPlatform == TargetPlatform.android
