@@ -47,13 +47,8 @@ class BleDiscoveryService {
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
 
-    final scanFilter = ScanFilter(
-      withServices: [_currentTargetUuid!],
-    );
-
     await BleScanDispatcher.instance.addListener(
       _handleScanResult,
-      scanFilter: scanFilter,
     );
   }
 

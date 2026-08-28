@@ -275,6 +275,18 @@ class BroadcastChannel {
         ? null
         : truncatedName;
 
+    int attempts = 0;
+    while (attempts < 20) {
+      final state = await UniversalBlePeripheral.getAvailabilityState();
+      if (state == PeripheralReadinessState.ready) break;
+      if (state == PeripheralReadinessState.unsupported ||
+          state == PeripheralReadinessState.unauthorized) {
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+      attempts++;
+    }
+
     _bleAdvertising = true;
     await UniversalBlePeripheral.startAdvertising(
       services: [targetUuid],
@@ -294,7 +306,6 @@ class BroadcastChannel {
 
     await BleScanDispatcher.instance.addListener(
       _handleBleScanResult,
-      scanFilter: ScanFilter(withServices: [targetUuid]),
     );
   }
 
