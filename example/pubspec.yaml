@@ -21,10 +21,5 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
-dependency_overrides:
-  universal_ble:
-    git:
-      url: https://github.com/Navideck/universal_ble.git
-
 flutter:
   uses-material-design: true

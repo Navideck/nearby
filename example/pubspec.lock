@@ -548,13 +548,12 @@ packages:
     source: hosted
     version: "1.4.0"
   universal_ble:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "."
-      ref: HEAD
-      resolved-ref: "05e7e737f43dca84eae2e3b8d7aa4209973270a5"
-      url: "https://github.com/Navideck/universal_ble.git"
-    source: git
+      name: universal_ble
+      sha256: "14ecc6abed48e2fd1d707524e4a274302093b885f8b27ff207ec89ac23a1b8af"
+      url: "https://pub.dev"
+    source: hosted
     version: "2.2.0"
   vector_math:
     dependency: transitive
