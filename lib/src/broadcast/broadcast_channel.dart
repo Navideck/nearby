@@ -9,6 +9,7 @@ import '../discovery/ble_discovery.dart';
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
+import 'broadcast_attribute_envelope.dart';
 import 'broadcast_packet.dart';
 
 /// Configuration for a [BroadcastChannel].
@@ -94,17 +95,32 @@ class BroadcastChannel {
   }
 
   /// Sends a raw data packet to all broadcast listeners across enabled transports.
-  Future<void> send(Uint8List data, {String? localName}) async {
+  ///
+  /// [attributes] are small string key/value pairs delivered alongside [data]
+  /// to listeners on the network (mDNS/multicast) transport only - they are
+  /// never sent over BLE, since BLE advertisements must stay within the
+  /// legacy 31-byte budget. Use them for small pieces of side-channel
+  /// metadata (e.g. an app-specific control port) that shouldn't be baked
+  /// into the [data] payload itself.
+  Future<void> send(
+    Uint8List data, {
+    String? localName,
+    Map<String, String>? attributes,
+  }) async {
     if (!_isBroadcasting) {
       await startBroadcasting();
     }
 
     // 1. Network Multicast
     if (_networkEnabled && _sendSockets.isNotEmpty) {
+      final networkPayload = encodeBroadcastEnvelope(
+        data,
+        attributes: attributes,
+      );
       final targetGroup = InternetAddress(config.multicastAddress);
       for (final socket in _sendSockets) {
         try {
-          socket.send(data, targetGroup, config.multicastPort);
+          socket.send(networkPayload, targetGroup, config.multicastPort);
         } catch (_) {}
       }
     }
@@ -245,8 +261,11 @@ class BroadcastChannel {
         if (event == RawSocketEvent.read) {
           final datagram = socket.receive();
           if (datagram != null && datagram.data.isNotEmpty) {
+            final decoded = decodeBroadcastEnvelope(datagram.data);
+            if (decoded == null) return;
             final packet = BroadcastPacket(
-              data: datagram.data,
+              data: decoded.data,
+              attributes: decoded.attributes,
               senderId: '${datagram.address.address}:${datagram.port}',
               medium: DiscoveryMedium.mdns,
               receivedAt: DateTime.now(),
