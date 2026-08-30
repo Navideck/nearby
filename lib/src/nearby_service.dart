@@ -95,7 +95,11 @@ class NearbyService {
 
   /// Creates and registers a dedicated [BroadcastChannel] managed by this service.
   BroadcastChannel createBroadcastChannel(BroadcastChannelConfig config) {
-    final channel = BroadcastChannel(config: config);
+    final channel = BroadcastChannel(
+      config: config,
+      senderId: localPeerId,
+      displayName: localDisplayName,
+    );
     _broadcastChannels.add(channel);
     return channel;
   }

@@ -1,5 +1,6 @@
 export 'src/broadcast/broadcast_channel.dart';
 export 'src/broadcast/broadcast_packet.dart';
+export 'src/transport/ble/ble_scan_dispatcher.dart';
 export 'src/models/connection_request.dart';
 export 'src/models/nearby_options.dart';
 export 'src/models/payload.dart';

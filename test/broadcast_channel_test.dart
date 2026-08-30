@@ -14,7 +14,6 @@ void main() {
       expect(config.multicastAddress, '239.255.0.128');
       expect(config.multicastPort, 53210);
       expect(config.bleCompanyId, 0xFFFF);
-      expect(config.bleServiceUuid, isNull);
     });
 
     test('BroadcastPacket stores metadata and payload', () {

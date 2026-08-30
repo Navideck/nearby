@@ -1,10 +1,18 @@
 import 'dart:typed_data';
+
 import '../models/peer.dart';
 
 /// A connectionless broadcast packet received over BLE advertisement or UDP multicast.
 class BroadcastPacket {
   final Uint8List data;
+  /// Lowercase eight-character sender fingerprint, identical on BLE and LAN.
   final String senderId;
+
+  /// Full persistent sender ID, available on the network only.
+  final String? fullSenderId;
+
+  /// Network source address, never inferred from a BLE device address.
+  final String? address;
   final DiscoveryMedium medium;
   final DateTime receivedAt;
   final String? deviceName;
@@ -21,6 +29,8 @@ class BroadcastPacket {
   BroadcastPacket({
     required this.data,
     required this.senderId,
+    this.fullSenderId,
+    this.address,
     required this.medium,
     DateTime? receivedAt,
     this.deviceName,

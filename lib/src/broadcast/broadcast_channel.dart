@@ -1,388 +1,294 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
-import '../discovery/ble_discovery.dart';
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
-import 'broadcast_attribute_envelope.dart';
 import 'broadcast_packet.dart';
+import 'broadcast_wire.dart';
+import 'multicast_transport.dart';
 
-/// Configuration for a [BroadcastChannel].
 class BroadcastChannelConfig {
-  /// Unique identifier/namespace for this broadcast channel.
   final String channelId;
-
-  /// Transport strategy (BLE-only, mDNS/Multicast-only, or Hybrid).
   final DiscoveryStrategy strategy;
-
-  /// UDP multicast IP address (default: 239.255.0.1).
   final String multicastAddress;
-
-  /// UDP multicast port (default: 9876).
   final int multicastPort;
-
-  /// Custom BLE service UUID. If null, derived deterministically from [channelId].
-  final String? bleServiceUuid;
-
-  /// BLE manufacturer company ID (default: 0xFFFF).
   final int bleCompanyId;
-
-  /// Optional prefix in local name for carrier fallback.
-  final String? bleLocalNamePrefix;
-
   const BroadcastChannelConfig({
     required this.channelId,
     this.strategy = DiscoveryStrategy.hybrid,
     this.multicastAddress = '239.255.0.128',
     this.multicastPort = 53210,
-    this.bleServiceUuid,
     this.bleCompanyId = 0xFFFF,
-    this.bleLocalNamePrefix,
   });
 }
 
-/// Generic connectionless broadcast channel supporting high-frequency
-/// UDP multicast and Bluetooth Low Energy advertisement updates.
+class BroadcastFailure {
+  final DiscoveryMedium medium;
+  final Object error;
+  const BroadcastFailure(this.medium, this.error);
+}
+
+/// Opaque connectionless bytes, with identical logical identity on both media.
+/// BLE supports at most 10 application bytes across advertising platforms.
 class BroadcastChannel {
   final BroadcastChannelConfig config;
-  final StreamController<BroadcastPacket> _packetController =
-      StreamController<BroadcastPacket>.broadcast();
+  final String senderId;
+  final String? displayName;
+  late final _wire = BroadcastWire(config.channelId);
+  late final _network = MulticastTransport(
+    config.multicastAddress,
+    config.multicastPort,
+  );
+  final _packets = StreamController<BroadcastPacket>.broadcast();
+  final _errors = StreamController<BroadcastFailure>.broadcast();
+  bool _isBroadcasting = false, _isListening = false, _disposed = false;
+  bool _bleScanning = false, _bleAdvertising = false, _bleUnavailable = false;
+  Future<void>? _startingBroadcast, _startingListen, _bleSending;
+  StreamSubscription<BlePeripheralAdvertisingStateChanged>? _advertisingState;
 
-  bool _isBroadcasting = false;
-  bool _isListening = false;
+  BroadcastChannel({required this.config, String? senderId, this.displayName})
+    : senderId =
+          senderId ??
+          List.generate(
+            16,
+            (_) => Random.secure().nextInt(256),
+          ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
-  // Network UDP Sockets
-  final List<RawDatagramSocket> _sendSockets = [];
-  RawDatagramSocket? _listenSocket;
-  StreamSubscription<RawSocketEvent>? _listenSocketSub;
-
-  // BLE state
-  bool _bleScanning = false;
-  bool _bleAdvertising = false;
-  String? _targetBleUuid;
-
-  BroadcastChannel({required this.config}) {
-    _targetBleUuid =
-        config.bleServiceUuid ??
-        BleDiscoveryService.generateServiceUuid(config.channelId);
-  }
-
+  static String fingerprint(String senderId) =>
+      BroadcastWire.senderFingerprint(senderId);
   bool get isBroadcasting => _isBroadcasting;
   bool get isListening => _isListening;
-  Stream<BroadcastPacket> get stream => _packetController.stream;
+  Stream<BroadcastPacket> get stream => _packets.stream;
+  Stream<BroadcastFailure> get errors => _errors.stream;
+  bool get _networkEnabled => config.strategy != DiscoveryStrategy.bleOnly;
+  bool get _bleEnabled => config.strategy != DiscoveryStrategy.mdnsOnly;
 
-  bool get _networkEnabled =>
-      config.strategy == DiscoveryStrategy.hybrid ||
-      config.strategy == DiscoveryStrategy.mdnsOnly;
+  void _fail(DiscoveryMedium medium, Object error) {
+    if (!_errors.isClosed) _errors.add(BroadcastFailure(medium, error));
+  }
 
-  bool get _bleEnabled =>
-      config.strategy == DiscoveryStrategy.hybrid ||
-      config.strategy == DiscoveryStrategy.bleOnly;
-
-  /// Starts broadcasting channel on enabled transports.
   Future<void> startBroadcasting() async {
-    if (_isBroadcasting) return;
+    if (_disposed) throw StateError('BroadcastChannel is disposed');
+    if (_isBroadcasting) return _startingBroadcast;
     _isBroadcasting = true;
+    _bleUnavailable = false;
+    _startingBroadcast = _startBroadcasting();
+    await _startingBroadcast;
+  }
 
+  Future<void> _startBroadcasting() async {
+    if (_bleEnabled) {
+      _advertisingState = UniversalBlePeripheral.advertisingStateStream.listen((
+        event,
+      ) {
+        if (event.state == PeripheralAdvertisingState.error) {
+          _fail(
+            DiscoveryMedium.ble,
+            StateError(event.error ?? 'BLE advertising failed'),
+          );
+        }
+      });
+    }
     if (_networkEnabled) {
-      await _setupSendSockets();
+      try {
+        await _network.startSending();
+      } catch (e) {
+        _fail(DiscoveryMedium.mdns, e);
+      }
     }
   }
 
-  /// Sends a raw data packet to all broadcast listeners across enabled transports.
-  ///
-  /// [attributes] are small string key/value pairs delivered alongside [data]
-  /// to listeners on the network (mDNS/multicast) transport only - they are
-  /// never sent over BLE, since BLE advertisements must stay within the
-  /// legacy 31-byte budget. Use them for small pieces of side-channel
-  /// metadata (e.g. an app-specific control port) that shouldn't be baked
-  /// into the [data] payload itself.
+  /// Attributes and localName are network metadata, not BLE carrier bytes.
+  /// A busy BLE radio skips a tick instead of queuing stale payloads.
   Future<void> send(
     Uint8List data, {
     String? localName,
     Map<String, String>? attributes,
   }) async {
-    if (!_isBroadcasting) {
-      await startBroadcasting();
-    }
-
-    // 1. Network Multicast
-    if (_networkEnabled && _sendSockets.isNotEmpty) {
-      final networkPayload = encodeBroadcastEnvelope(
+    if (!_isBroadcasting) await startBroadcasting();
+    await _startingBroadcast;
+    if (!_isBroadcasting) return;
+    if (_networkEnabled) {
+      final bytes = _wire.encodeNetwork(
         data,
-        attributes: attributes,
+        senderId,
+        localName ?? displayName,
+        attributes ?? {},
       );
-      final targetGroup = InternetAddress(config.multicastAddress);
-      for (final socket in _sendSockets) {
-        try {
-          socket.send(networkPayload, targetGroup, config.multicastPort);
-        } catch (_) {}
+      if (!_network.send(bytes)) {
+        _fail(DiscoveryMedium.mdns, StateError('No datagram sent'));
       }
     }
-
-    // 2. BLE Advertisement
-    if (_bleEnabled) {
-      try {
-        await _updateBleAdvertisement(data, localName: localName);
-      } catch (_) {}
+    if (!_bleEnabled || _bleUnavailable || _bleSending != null) return;
+    _bleSending = _sendBle(_wire.encode(data, senderId));
+    try {
+      await _bleSending;
+    } finally {
+      _bleSending = null;
     }
   }
 
-  /// Stops broadcasting on all transports.
+  Future<void> _sendBle(Uint8List bytes) async {
+    try {
+      final name = _wire.localName(bytes);
+      final readiness = await UniversalBlePeripheral.getAvailabilityState();
+      if (!_isBroadcasting) return;
+      if (readiness == PeripheralReadinessState.unsupported ||
+          readiness == PeripheralReadinessState.unauthorized) {
+        _bleUnavailable = true;
+        throw StateError('BLE advertising $readiness');
+      }
+      if (readiness != PeripheralReadinessState.ready) return;
+      if (_bleAdvertising) await UniversalBlePeripheral.stopAdvertising();
+      _bleAdvertising = false;
+      if (!_isBroadcasting) return;
+      final apple =
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS;
+      await UniversalBlePeripheral.startAdvertising(
+        services: const [],
+        localName: apple ? name : null,
+        manufacturerData: apple
+            ? null
+            : ManufacturerData(config.bleCompanyId, bytes),
+        platformConfig: PeripheralPlatformConfig(
+          android: PeripheralAndroidOptions(
+            addManufacturerDataInScanResponse: false,
+          ),
+        ),
+      );
+      _bleAdvertising = true;
+    } catch (e) {
+      _fail(DiscoveryMedium.ble, e);
+    }
+  }
+
   Future<void> stopBroadcasting() async {
     _isBroadcasting = false;
-
-    for (final socket in _sendSockets) {
-      try {
-        socket.close();
-      } catch (_) {}
-    }
-    _sendSockets.clear();
-
+    await _startingBroadcast;
+    await _bleSending;
+    await _network.stopSending();
     if (_bleAdvertising) {
       _bleAdvertising = false;
       try {
         await UniversalBlePeripheral.stopAdvertising();
-      } catch (_) {}
+      } catch (e) {
+        _fail(DiscoveryMedium.ble, e);
+      }
     }
+    await _advertisingState?.cancel();
+    _advertisingState = null;
   }
 
-  /// Starts listening for broadcast packets across enabled transports.
   Future<void> startListening() async {
-    if (_isListening) return;
+    if (_disposed) throw StateError('BroadcastChannel is disposed');
+    if (_isListening) return _startingListen;
     _isListening = true;
+    _startingListen = _startListening();
+    await _startingListen;
+  }
 
-    if (_networkEnabled) {
-      await _setupListenSocket();
-    }
-
-    if (_bleEnabled) {
-      await _setupBleScanning();
+  Future<void> _startListening() async {
+    var available = false;
+    await Future.wait([
+      if (_networkEnabled)
+        () async {
+          try {
+            await _network.startListening((datagram, receivedAt) {
+              if (!_isListening) return;
+              final envelope = _wire.decodeNetwork(datagram.data);
+              if (envelope == null) return;
+              final payload = _wire.decode(envelope.data)!;
+              _packets.add(
+                BroadcastPacket(
+                  data: payload.data,
+                  senderId: payload.senderId,
+                  fullSenderId: envelope.attributes['nearby.sender'],
+                  deviceName: envelope.attributes['nearby.name'],
+                  address: datagram.address.address,
+                  medium: DiscoveryMedium.mdns,
+                  receivedAt: receivedAt,
+                  attributes: Map.unmodifiable(
+                    Map.of(envelope.attributes)
+                      ..removeWhere((key, _) => key.startsWith('nearby.')),
+                  ),
+                ),
+              );
+            });
+            available = true;
+          } catch (e) {
+            _fail(DiscoveryMedium.mdns, e);
+          }
+        }(),
+      if (_bleEnabled)
+        () async {
+          try {
+            _bleScanning = true;
+            await BleScanDispatcher.instance.addListener(_handleBleScanResult);
+            available = true;
+          } catch (e) {
+            _bleScanning = false;
+            _fail(DiscoveryMedium.ble, e);
+          }
+        }(),
+    ]);
+    if (!available) {
+      _isListening = false;
+      throw StateError('No Nearby listening transport available');
     }
   }
 
-  /// Stops listening for broadcast packets.
+  void _handleBleScanResult(BleDevice device) {
+    if (!_bleScanning || !_isListening) return;
+    final carriers = <Uint8List>[
+      for (final data in device.manufacturerDataList)
+        if (data.companyId == config.bleCompanyId) data.payload,
+      ?_wire.decodeLocalName(device.name),
+    ];
+    for (final bytes in carriers) {
+      if (bytes.length > 18) continue;
+      final payload = _wire.decode(bytes);
+      if (payload == null) continue;
+      _packets.add(
+        BroadcastPacket(
+          data: payload.data,
+          senderId: payload.senderId,
+          medium: DiscoveryMedium.ble,
+          rssi: device.rssi,
+          receivedAt:
+              device.timestampMicrosecondsDateTime ??
+              device.timestampDateTime ??
+              DateTime.now(),
+        ),
+      );
+      return;
+    }
+  }
+
   Future<void> stopListening() async {
-    if (!_isListening) return;
     _isListening = false;
-
-    if (_listenSocketSub != null) {
-      await _listenSocketSub?.cancel();
-      _listenSocketSub = null;
+    try {
+      await _startingListen;
+    } catch (_) {
+      /* Failure already reported. */
     }
-    if (_listenSocket != null) {
-      try {
-        _listenSocket?.close();
-      } catch (_) {}
-      _listenSocket = null;
-    }
-
+    await _network.stopListening();
     if (_bleScanning) {
       _bleScanning = false;
       await BleScanDispatcher.instance.removeListener(_handleBleScanResult);
     }
   }
 
-  // --- Network Internal Implementation ---
-
-  Future<void> _setupSendSockets() async {
-    _sendSockets.clear();
-    try {
-      final interfaces = await NetworkInterface.list(
-        includeLinkLocal: false,
-        type: InternetAddressType.IPv4,
-      );
-
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          if (!addr.isLoopback) {
-            try {
-              final socket = await RawDatagramSocket.bind(
-                addr,
-                0,
-                reuseAddress: true,
-                reusePort: true,
-              );
-              socket.multicastHops = 1;
-              socket.broadcastEnabled = true;
-              _sendSockets.add(socket);
-            } catch (_) {}
-          }
-        }
-      }
-
-      if (_sendSockets.isEmpty) {
-        final fallback = await RawDatagramSocket.bind(
-          InternetAddress.anyIPv4,
-          0,
-          reuseAddress: true,
-          reusePort: true,
-        );
-        fallback.multicastHops = 1;
-        fallback.broadcastEnabled = true;
-        _sendSockets.add(fallback);
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _setupListenSocket() async {
-    try {
-      final socket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        config.multicastPort,
-        reuseAddress: true,
-        reusePort: true,
-      );
-
-      final group = InternetAddress(config.multicastAddress);
-      try {
-        socket.joinMulticast(group);
-      } catch (_) {}
-
-      try {
-        final interfaces = await NetworkInterface.list(
-          includeLinkLocal: false,
-          type: InternetAddressType.IPv4,
-        );
-        for (final iface in interfaces) {
-          try {
-            socket.joinMulticast(group, iface);
-          } catch (_) {}
-        }
-      } catch (_) {}
-
-      _listenSocket = socket;
-      _listenSocketSub = socket.listen((event) {
-        if (event == RawSocketEvent.read) {
-          final datagram = socket.receive();
-          if (datagram != null && datagram.data.isNotEmpty) {
-            final decoded = decodeBroadcastEnvelope(datagram.data);
-            if (decoded == null) return;
-            final packet = BroadcastPacket(
-              data: decoded.data,
-              attributes: decoded.attributes,
-              senderId: '${datagram.address.address}:${datagram.port}',
-              medium: DiscoveryMedium.mdns,
-              receivedAt: DateTime.now(),
-            );
-            if (!_packetController.isClosed) {
-              _packetController.add(packet);
-            }
-          }
-        }
-      });
-    } catch (_) {}
-  }
-
-  // --- BLE Internal Implementation ---
-
-  Future<void> _updateBleAdvertisement(
-    Uint8List data, {
-    String? localName,
-  }) async {
-    final targetUuid = _targetBleUuid!;
-    final truncatedName = localName != null && localName.length > 26
-        ? localName.substring(0, 26)
-        : localName;
-
-    final advertiseLocalName = defaultTargetPlatform == TargetPlatform.android
-        ? null
-        : truncatedName;
-
-    int attempts = 0;
-    while (attempts < 20) {
-      final state = await UniversalBlePeripheral.getAvailabilityState();
-      if (state == PeripheralReadinessState.ready) break;
-      if (state == PeripheralReadinessState.unsupported ||
-          state == PeripheralReadinessState.unauthorized) {
-        break;
-      }
-      await Future.delayed(const Duration(milliseconds: 100));
-      attempts++;
-    }
-
-    if (_bleAdvertising) {
-      try {
-        await UniversalBlePeripheral.stopAdvertising();
-      } catch (_) {}
-    }
-    _bleAdvertising = true;
-    await UniversalBlePeripheral.startAdvertising(
-      services: [targetUuid],
-      localName: advertiseLocalName,
-      manufacturerData: ManufacturerData(config.bleCompanyId, data),
-      platformConfig: PeripheralPlatformConfig(
-        android: PeripheralAndroidOptions(
-          addManufacturerDataInScanResponse: true,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _setupBleScanning() async {
-    _bleScanning = true;
-    final targetUuid = _targetBleUuid!;
-
-    await BleScanDispatcher.instance.addListener(
-      _handleBleScanResult,
-    );
-  }
-
-  void _handleBleScanResult(BleDevice device) {
-    if (!_bleScanning || _targetBleUuid == null) return;
-    final targetUuid = _targetBleUuid!;
-
-    Uint8List? payload;
-
-    // 1. Check manufacturer data
-    for (final mfg in device.manufacturerDataList) {
-      if (mfg.companyId == config.bleCompanyId && mfg.payload.isNotEmpty) {
-        payload = mfg.payload;
-        break;
-      }
-    }
-
-    // 2. Check local name payload fallback
-    if (payload == null &&
-        config.bleLocalNamePrefix != null &&
-        device.name != null) {
-      if (device.name!.startsWith(config.bleLocalNamePrefix!)) {
-        final raw = device.name!.substring(config.bleLocalNamePrefix!.length);
-        try {
-          payload = base64Url.decode(base64.normalize(raw));
-        } catch (_) {}
-      }
-    }
-
-    // 3. Check service match
-    final matchesService = device.services.any(
-      (s) => BleUuidParser.compareStrings(s, targetUuid),
-    );
-
-    if (payload != null || matchesService) {
-      final packet = BroadcastPacket(
-        data: payload ?? Uint8List(0),
-        senderId: device.deviceId,
-        medium: DiscoveryMedium.ble,
-        receivedAt: DateTime.now(),
-        deviceName: device.name,
-        rssi: device.rssi,
-      );
-      if (!_packetController.isClosed) {
-        _packetController.add(packet);
-      }
-    }
-  }
-
-  /// Disposes resources.
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     await stopBroadcasting();
     await stopListening();
-    await _packetController.close();
+    await _packets.close();
+    await _errors.close();
   }
 }

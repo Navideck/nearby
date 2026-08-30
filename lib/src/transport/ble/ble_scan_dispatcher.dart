@@ -1,75 +1,90 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 typedef BleScanCallback = void Function(BleDevice device);
 
-/// Multiplexes Bluetooth Low Energy scan results across multiple concurrent listeners
-/// to avoid race conditions and callback overwrites on UniversalBle.onScanResult.
+/// Shares a scan without replacing the application's scan callback.
 class BleScanDispatcher {
   BleScanDispatcher._();
   static final BleScanDispatcher instance = BleScanDispatcher._();
-
   final Set<BleScanCallback> _listeners = {};
-  bool _isScanning = false;
+  StreamSubscription<BleDevice>? _subscription;
+  Future<void> _operation = Future.value();
+  bool _ownsScan = false;
 
-  bool get isScanning => _isScanning;
+  /// Restores an application's previous scan/filter after Nearby releases BLE.
+  Future<void> Function()? resumeInterruptedScan;
+  bool get isScanning => _subscription != null;
   int get listenerCount => _listeners.length;
 
-  /// Registers a scan [callback] and starts BLE scanning if not already active.
-  Future<void> addListener(BleScanCallback callback, {ScanFilter? scanFilter}) async {
-    _listeners.add(callback);
-    if (!_isScanning) {
-      _isScanning = true;
-      UniversalBle.onScanResult = _dispatchScanResult;
-      try {
-        if (scanFilter != null) {
-          await UniversalBle.startScan(scanFilter: scanFilter);
-        } else {
-          await UniversalBle.startScan();
-        }
-      } catch (_) {
-        try {
-          await UniversalBle.startScan();
-        } catch (_) {}
-      }
-    }
+  Future<void> _serialize(Future<void> Function() action) {
+    final next = _operation.then((_) => action());
+    _operation = next.catchError((Object _) {});
+    return next;
   }
 
-  /// Removes a scan [callback] and stops scanning when no listeners remain.
-  Future<void> removeListener(BleScanCallback callback) async {
-    _listeners.remove(callback);
-    if (_listeners.isEmpty && _isScanning) {
-      _isScanning = false;
-      try {
+  Future<void> addListener(
+    BleScanCallback callback, {
+    ScanFilter? scanFilter,
+  }) => _serialize(() async {
+    _listeners.add(callback);
+    if (_subscription != null) return;
+    _subscription = UniversalBle.scanStream.listen(_dispatchScanResult);
+    var interrupted = false;
+    try {
+      _ownsScan = !await UniversalBle.isScanning();
+      if (!_ownsScan) {
         await UniversalBle.stopScan();
-      } catch (_) {}
+        interrupted = true;
+      }
+      // Unfiltered: simultaneous listeners can use different carriers.
+      await UniversalBle.startScan(
+        platformConfig: PlatformConfig(
+          android: AndroidOptions(scanMode: AndroidScanMode.lowLatency),
+        ),
+      );
+    } catch (_) {
+      _listeners.remove(callback);
+      await _subscription?.cancel();
+      _subscription = null;
+      if (interrupted) {
+        await (resumeInterruptedScan ?? UniversalBle.startScan)();
+      }
+      _ownsScan = false;
+      rethrow;
     }
+  });
+
+  Future<void> removeListener(BleScanCallback callback) => _serialize(() async {
+    _listeners.remove(callback);
+    if (_listeners.isEmpty) await _stop();
+  });
+
+  Future<void> _stop() async {
+    final wasScanning = _subscription != null;
+    await _subscription?.cancel();
+    _subscription = null;
+    if (wasScanning) {
+      await UniversalBle.stopScan();
+      if (!_ownsScan) await (resumeInterruptedScan ?? UniversalBle.startScan)();
+    }
+    _ownsScan = false;
   }
 
   void _dispatchScanResult(BleDevice device) {
-    if (!_isScanning) return;
     for (final listener in List.of(_listeners)) {
-      try {
-        listener(device);
-      } catch (_) {}
+      listener(device);
     }
   }
 
-  /// Manually dispatches a scan result to registered listeners (for testing).
   @visibleForTesting
-  void dispatchScanResultForTesting(BleDevice device) {
-    _dispatchScanResult(device);
-  }
+  void dispatchScanResultForTesting(BleDevice device) =>
+      _dispatchScanResult(device);
 
-  /// Clears all listeners and stops scanning.
-  Future<void> reset() async {
+  Future<void> reset() => _serialize(() async {
     _listeners.clear();
-    if (_isScanning) {
-      _isScanning = false;
-      try {
-        await UniversalBle.stopScan();
-      } catch (_) {}
-    }
-  }
+    await _stop();
+  });
 }

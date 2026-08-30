@@ -34,7 +34,7 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 | **Connection Overhead** | Requires connection + SAS PIN handshake | **Zero connection overhead** (Stateless) |
 | **Device Scale** | Bound by platform TCP/GATT limits (~3–7 BLE) | **Unlimited listeners** simultaneously |
 | **Transports** | TCP sockets & BLE GATT characteristics | UDP Multicast datagrams & BLE Advertisements |
-| **Data Types** | Byte packets, large disk files, continuous streams | High-frequency raw byte datagrams (0 framing) |
+| **Data Types** | Byte packets, large disk files, continuous streams | Opaque datagrams with channel and sender framing |
 | **Best For** | File sharing, remote control, chat, audio streaming | Timecode sync, mesh beacons, tally lights, presence |
 
 ---
@@ -196,7 +196,25 @@ nearby.payloadReceivedStream.listen((payload) {
 
 ### 3. Mode B: Connectionless Broadcasts (1:Many)
 
-BroadcastChannels allow 1 sender to broadcast high-frequency datagrams to unlimited listeners via UDP Multicast and BLE Manufacturer Data without pairing or connection overhead.
+Broadcast channels support multiple distinct senders and connectionless listeners over UDP and BLE, without pairing. This branch introduces a new wire format; it does not accept the earlier unframed BLE or network broadcasts.
+
+Pass a persistent installation ID as `NearbyService(localPeerId: ...)` or `BroadcastChannel(senderId: ...)`. Every received `senderId` is the same eight-character SHA-256 fingerprint over BLE and LAN, independent of IP address, service name, or BLE address. LAN additionally supplies `fullSenderId`, `address`, `deviceName`, and arbitrary string `attributes`. Fingerprints are 32 bits and can collide; they are not authentication. Broadcasts are neither encrypted nor authenticated.
+
+BLE carries at most **10 application bytes**. Nearby adds a four-byte channel fingerprint and four-byte sender fingerprint. On iOS/macOS, the resulting 18 bytes become `N2` plus unpadded Base64URL in the local name (26 characters; with flags and the AD header, 31 legacy bytes). Android and Windows put the same bytes in manufacturer data. No advertised service UUID, GATT connection, extended advertisement, or fragmentation is required. The caller never constructs a BLE name or manufacturer record. `localName` is network display metadata only.
+
+| Platform | BLE transmit carrier | BLE receive | Network |
+| --- | --- | --- | --- |
+| Android | Manufacturer data | Yes | Yes |
+| iOS/macOS | Local name, foreground | Yes | Yes |
+| Windows | Manufacturer data | Yes | Yes |
+| Linux | Unsupported peripheral mode | Yes | Yes |
+| Web | Unsupported | Unsupported | Unsupported |
+
+Windows transmit requires [universal_ble PR #290](https://github.com/Navideck/universal_ble/pull/290) until it is released; use a dependency override to that PR's commit. Apple background advertising omits local names, so this carrier is foreground-only. Requested update frequency is not an on-air guarantee, especially with Windows' best-effort advertising policy.
+
+Transport failures are emitted on `channel.errors` independently; one unavailable transport does not stop the other. Network transport joins IPv4 interfaces, includes loopback, sends an IPv4 broadcast fallback, and refreshes interfaces every five seconds. Nearby holds Android's multicast lock only while a network listener needs it. BLE receive timestamps use native microsecond timestamps when available. Busy BLE sends skip updates instead of queuing stale bytes.
+
+Scans are shared across Nearby listeners without overwriting `UniversalBle.onScanResult`. Nearby temporarily widens an existing scan; set `BleScanDispatcher.instance.resumeInterruptedScan` to restore the application's previous scan/filter when the last Nearby listener stops. Use only one BLE advertising owner per process; connected peripheral advertising and broadcast advertising share the platform peripheral API.
 
 #### A. Dedicated Broadcast Channel
 ```dart
