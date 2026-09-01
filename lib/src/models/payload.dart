@@ -89,10 +89,12 @@ class NearbyPayload {
     String? customFileName,
   }) {
     final int length = file.existsSync() ? file.lengthSync() : 0;
-    final String name = customFileName ?? file.uri.pathSegments.lastWhere(
-      (s) => s.isNotEmpty,
-      orElse: () => 'payload_file.bin',
-    );
+    final String name =
+        customFileName ??
+        file.uri.pathSegments.lastWhere(
+          (s) => s.isNotEmpty,
+          orElse: () => 'payload_file.bin',
+        );
     return NearbyPayload._(
       id: id ?? DateTime.now().microsecondsSinceEpoch,
       peerId: peerId,
@@ -153,8 +155,9 @@ class PayloadTransferUpdate {
       totalBytes > 0 ? (bytesTransferred / totalBytes).clamp(0.0, 1.0) : null;
 
   /// Percentage integer (0 to 100).
-  int get percentage =>
-      totalBytes > 0 ? ((bytesTransferred / totalBytes) * 100).toInt().clamp(0, 100) : 0;
+  int get percentage => totalBytes > 0
+      ? ((bytesTransferred / totalBytes) * 100).toInt().clamp(0, 100)
+      : 0;
 
   @override
   String toString() =>

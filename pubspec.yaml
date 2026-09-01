@@ -1,5 +1,5 @@
 name: nearby
-description: "A new Flutter plugin project."
+description: "Nearby peer sessions and connectionless UDP/BLE broadcasting for Flutter."
 version: 0.0.1
 homepage:
 
@@ -14,6 +14,7 @@ dependencies:
   bonsoir: ^7.1.5
   universal_ble: ^2.2.0
   crypto: ^3.0.3
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   flutter_test:

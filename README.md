@@ -44,7 +44,7 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 - **Multiplatform**: iOS, macOS, Android, Windows, Linux.
 - **Hybrid Transports**: Seamlessly multiplexes Wi-Fi/LAN and Bluetooth Low Energy.
 - **Multiplexed BLE Scanning**: Centralized BLE scan dispatcher prevents callback collisions when discovery and broadcast channels run concurrently.
-- **Diffie-Hellman SAS PIN Verification**: Secure session establishment with short numeric authentication strings (SAS).
+- **Encrypted sessions**: Ephemeral Diffie-Hellman keys, AES-256-GCM frame encryption, HMAC authentication, and optional SAS PIN verification.
 - **Chunked Payload Engine**: Reliable chunking, interleaving, and CRC32 verification for byte messages, files, and live streams.
 - **Connectionless Broadcast Channels**: Ultra-low latency UDP multicast and BLE manufacturer advertising for 1:Many real-time broadcasting.
 
@@ -243,7 +243,7 @@ await channel.send(Uint8List.fromList([0x01, 0x02, 0x03, 0x04]), localName: 'Sla
 await channel.sendNetwork(Uint8List.fromList([0x05, 0x06]));
 
 // A hybrid channel can also listen only on the network transport.
-await channel.startListening(strategy: DiscoveryStrategy.mdnsOnly);
+await channel.startListening(strategy: DiscoveryStrategy.networkOnly);
 ```
 
 #### B. Convenience Service Broadcasts
@@ -283,6 +283,7 @@ await nearby.dispose();
 | API | Type | Description |
 | :--- | :--- | :--- |
 | `startAdvertising({options})` | Method | Starts mDNS & BLE peripheral advertising. |
+| `advertisingPort` | Getter | Actual TCP port selected for connected sessions. |
 | `stopAdvertising()` | Method | Stops advertising and closes inbound servers. |
 | `startDiscovery({options})` | Method | Starts browsing for nearby advertising peers. |
 | `stopDiscovery()` | Method | Stops discovery and stops scanning. |

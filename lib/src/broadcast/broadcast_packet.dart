@@ -1,10 +1,12 @@
 import 'dart:typed_data';
 
-import '../models/peer.dart';
+/// Transport that discovered a peer or delivered a broadcast packet.
+enum DiscoveryMedium { network, ble, hybrid }
 
 /// A connectionless broadcast packet received over BLE advertisement or UDP multicast.
 class BroadcastPacket {
   final Uint8List data;
+
   /// Lowercase eight-character sender fingerprint, identical on BLE and LAN.
   final String senderId;
 
@@ -20,7 +22,7 @@ class BroadcastPacket {
 
   /// Small string key/value attributes sent alongside [data].
   ///
-  /// Only populated for packets received over the network (mDNS/multicast)
+  /// Only populated for packets received over the network
   /// transport - BLE advertisement payloads never carry attributes, since
   /// they must stay within the legacy 31-byte advertisement budget. Always
   /// empty (never null) when absent.

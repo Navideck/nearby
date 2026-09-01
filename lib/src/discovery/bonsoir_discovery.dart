@@ -1,5 +1,8 @@
 import 'dart:async';
+
 import 'package:bonsoir/bonsoir.dart';
+import 'package:flutter/services.dart';
+
 import '../models/peer.dart';
 
 /// Bonsoir (mDNS / Bonjour) implementation for Local Network broadcasting and peer browsing.
@@ -43,28 +46,39 @@ class BonsoirDiscoveryService {
     );
 
     _broadcast = BonsoirBroadcast(service: service);
-    await _broadcast!.initialize();
-    await _broadcast!.start();
+    try {
+      await _broadcast!.initialize();
+      await _broadcast!.start();
+    } on MissingPluginException {
+      _broadcast = null;
+    }
   }
 
   /// Stops broadcasting this device.
   Future<void> stopBroadcasting() async {
     if (_broadcast != null) {
-      await _broadcast!.stop();
+      try {
+        await _broadcast!.stop();
+      } on MissingPluginException {
+        // TCP sessions still work when discovery is unavailable.
+      }
       _broadcast = null;
     }
   }
 
   /// Starts scanning / browsing for nearby Bonsoir services.
-  Future<void> startBrowsing({
-    required String serviceType,
-  }) async {
+  Future<void> startBrowsing({required String serviceType}) async {
     await stopBrowsing();
 
     final formattedType = formatServiceType(serviceType);
 
     _discovery = BonsoirDiscovery(type: formattedType);
-    await _discovery!.initialize();
+    try {
+      await _discovery!.initialize();
+    } on MissingPluginException {
+      _discovery = null;
+      return;
+    }
 
     _discoverySubscription = _discovery!.eventStream?.listen(
       (event) {
@@ -75,16 +89,21 @@ class BonsoirDiscoveryService {
           final attributes = service.attributes;
           final peerId = attributes['id'] ?? service.name;
           final displayName = attributes['name'] ?? service.name;
-          final ip = service.hostAddress ??
-              (service.hostAddresses.isNotEmpty ? service.hostAddresses.first : null) ??
+          final ip =
+              service.hostAddress ??
+              (service.hostAddresses.isNotEmpty
+                  ? service.hostAddresses.first
+                  : null) ??
               service.hostname;
-          final port = service.port > 0 ? service.port : (int.tryParse(attributes['port'] ?? '') ?? 0);
+          final port = service.port > 0
+              ? service.port
+              : (int.tryParse(attributes['port'] ?? '') ?? 0);
 
           final peer = Peer(
             id: peerId,
             displayName: displayName,
             metadata: attributes,
-            discoveredVia: DiscoveryMedium.mdns,
+            discoveredVia: DiscoveryMedium.network,
             ipAddress: ip,
             port: port > 0 ? port : null,
             lastSeen: DateTime.now(),
@@ -112,7 +131,11 @@ class BonsoirDiscoveryService {
       _discoverySubscription = null;
     }
     if (_discovery != null) {
-      await _discovery!.stop();
+      try {
+        await _discovery!.stop();
+      } on MissingPluginException {
+        // Manual connections remain available without discovery.
+      }
       _discovery = null;
     }
   }
@@ -148,5 +171,4 @@ class BonsoirDiscoveryService {
     // Plain name — prepend underscore and append ._tcp
     return '_$serviceType._tcp';
   }
-
 }

@@ -1,14 +1,5 @@
-/// The medium through which a peer was discovered.
-enum DiscoveryMedium {
-  /// Discovered via Bonjour / mDNS on local network (Wi-Fi or Ethernet).
-  mdns,
-
-  /// Discovered via Bluetooth Low Energy advertisement.
-  ble,
-
-  /// Discovered and verified across both mDNS and BLE.
-  hybrid,
-}
+import '../broadcast/broadcast_packet.dart';
+export '../broadcast/broadcast_packet.dart' show DiscoveryMedium;
 
 /// Connection state of a remote peer.
 enum PeerConnectionState {
@@ -118,13 +109,14 @@ class Peer {
     return Peer(
       id: json['id'] as String,
       displayName: json['displayName'] as String,
-      metadata: (json['metadata'] as Map<dynamic, dynamic>?)?.map(
+      metadata:
+          (json['metadata'] as Map<dynamic, dynamic>?)?.map(
             (k, v) => MapEntry(k.toString(), v.toString()),
           ) ??
           const {},
       discoveredVia: DiscoveryMedium.values.firstWhere(
         (m) => m.name == json['discoveredVia'],
-        orElse: () => DiscoveryMedium.mdns,
+        orElse: () => DiscoveryMedium.network,
       ),
       ipAddress: json['ipAddress'] as String?,
       port: json['port'] as int?,

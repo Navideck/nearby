@@ -57,18 +57,13 @@ void main() {
     test('throws when a key exceeds 255 bytes', () {
       final key = 'k' * 256;
       expect(
-        () => encodeBroadcastEnvelope(
-          Uint8List(0),
-          attributes: {key: 'v'},
-        ),
+        () => encodeBroadcastEnvelope(Uint8List(0), attributes: {key: 'v'}),
         throwsArgumentError,
       );
     });
 
     test('throws when more than 255 attributes are provided', () {
-      final attributes = {
-        for (var i = 0; i < 256; i++) 'k$i': 'v',
-      };
+      final attributes = {for (var i = 0; i < 256; i++) 'k$i': 'v'};
       expect(
         () => encodeBroadcastEnvelope(Uint8List(0), attributes: attributes),
         throwsArgumentError,

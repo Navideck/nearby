@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'models/peer.dart';
 import 'payload/payload_manager.dart';
 import 'protocol/packet_framer.dart';
 import 'protocol/security_manager.dart';
 import 'transport/ble_transport.dart';
+import 'transport/tcp_transport.dart';
 import 'transport/transport.dart';
 
 /// Manages active peer session, protocol handshakes, SAS verification, and data transport.
@@ -150,16 +152,17 @@ class NearbySession {
   Future<void> handleFrame(PacketFrame frame) async {
     switch (frame.type) {
       case FrameType.handshakeInit:
-        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final json =
+            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         _remoteToken = json['token'] as String?;
         final String remotePeerId = json['peerId'] as String? ?? peer.id;
         final String remoteDisplayName =
             json['displayName'] as String? ?? peer.displayName;
         final Map<String, String> metadata =
             (json['metadata'] as Map<dynamic, dynamic>?)?.map(
-                  (k, v) => MapEntry(k.toString(), v.toString()),
-                ) ??
-                {};
+              (k, v) => MapEntry(k.toString(), v.toString()),
+            ) ??
+            {};
         _handshakeMetadata = Map<String, String>.unmodifiable(metadata);
         peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
 
@@ -181,7 +184,8 @@ class NearbySession {
         break;
 
       case FrameType.handshakeAck:
-        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final json =
+            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         final bool accepted = json['accepted'] == true;
         _remoteToken = json['token'] as String?;
 
@@ -189,7 +193,15 @@ class NearbySession {
           final String remotePeerId = json['peerId'] as String? ?? peer.id;
           final String remoteDisplayName =
               json['displayName'] as String? ?? peer.displayName;
-          peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
+          peer = peer.copyWith(
+            id: remotePeerId,
+            displayName: remoteDisplayName,
+          );
+          if (transport is TcpTransport) {
+            (transport as TcpTransport).updatePeerId(remotePeerId);
+          } else if (transport is BleTransport) {
+            (transport as BleTransport).updatePeerId(remotePeerId);
+          }
 
           _sharedSecret = SecurityManager.computeSharedSecret(
             privateKey: _keyPair.privateKey,
@@ -243,19 +255,26 @@ class NearbySession {
       case FrameType.payloadChunk:
       case FrameType.payloadAck:
       case FrameType.payloadCancel:
-        // Enforce HMAC authentication for all post-handshake frames
-        if (_sessionKey != null) {
-          if (frame.authTag == null || !frame.verifyAuthTag(_sessionKey!)) {
-            disconnect(reason: 'Rejected frame: invalid HMAC authentication tag');
-            return;
-          }
+        final sessionKey = _sessionKey;
+        if (_state != PeerConnectionState.connected || sessionKey == null) {
+          disconnect(reason: 'Rejected frame before session authentication');
+          return;
         }
 
-        if (frame.type == FrameType.heartbeat) {
+        late final PacketFrame clearFrame;
+        try {
+          clearFrame = frame.decrypt(sessionKey);
+        } on FormatException {
+          disconnect(reason: 'Rejected invalid encrypted session frame');
+          return;
+        }
+
+        if (clearFrame.type == FrameType.heartbeat) {
           // Keepalive pulse acknowledged
           break;
-        } else if (frame.type == FrameType.disconnect) {
-          final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        } else if (clearFrame.type == FrameType.disconnect) {
+          final json =
+              jsonDecode(utf8.decode(clearFrame.body)) as Map<String, dynamic>;
           final reason = json['reason'] as String? ?? 'Peer disconnected';
           disconnect(reason: reason, notifyRemote: false);
           break;
@@ -263,7 +282,7 @@ class NearbySession {
 
         await payloadManager.handleIncomingFrame(
           peerId: peer.id,
-          frame: frame,
+          frame: clearFrame,
           storageDirectory: storageDirectory,
           transport: transport,
         );
@@ -276,7 +295,8 @@ class NearbySession {
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (_state == PeerConnectionState.connected && transport.isConnected) {
         // Only send heartbeat if no payload/control traffic was sent recently
-        if (DateTime.now().difference(_lastTxTime) < const Duration(seconds: 4)) {
+        if (DateTime.now().difference(_lastTxTime) <
+            const Duration(seconds: 4)) {
           return;
         }
         try {
@@ -308,7 +328,11 @@ class NearbySession {
   }
 
   /// Sends a file.
-  Future<void> sendFile(File file, {int? payloadId, String? customFileName}) async {
+  Future<void> sendFile(
+    File file, {
+    int? payloadId,
+    String? customFileName,
+  }) async {
     if (_state != PeerConnectionState.connected) {
       throw StateError('Cannot send data; peer is not connected');
     }

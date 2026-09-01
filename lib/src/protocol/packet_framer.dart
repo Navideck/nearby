@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'security_manager.dart';
 
 /// Magic bytes identifying the Nearby protocol frame ('N', 'B').
 const int kMagicByte0 = 0x4E;
 const int kMagicByte1 = 0x42;
-const int kProtocolVersion = 1;
+const int kProtocolVersion = 2;
 const int kHeaderLength = 20; // 2 (magic) + 1 (version) + 1 (type) + 8 (payloadId) + 4 (sequence) + 4 (length)
 const int kMaxFrameBodyLength = 16 * 1024 * 1024; // 16 MB max frame body
 const int kMaxFramerBufferLength = 32 * 1024 * 1024; // 32 MB max buffer
@@ -78,17 +79,29 @@ class PacketFrame {
     }
 
     // CRC32 checksum computed over header + body
-    final int crc = Crc32.compute(buffer.sublist(0, kHeaderLength + bodyLength));
+    final int crc = Crc32.compute(
+      buffer.sublist(0, kHeaderLength + bodyLength),
+    );
     byteData.setUint32(kHeaderLength + bodyLength, crc, Endian.big);
 
     return buffer;
   }
 
-  /// Encodes this frame into a binary payload with magic bytes, length, CRC32 checksum,
-  /// and an optional HMAC-SHA256 authentication tag if [sessionKey] is provided.
+  /// Encodes this frame with CRC32. Session frames are encrypted with AES-GCM
+  /// and carry an outer HMAC-SHA256 authentication tag.
   Uint8List toBytes({Uint8List? sessionKey}) {
     final bool useAuth = sessionKey != null;
-    final Uint8List prefix = _rawHeaderAndBody(authenticated: useAuth);
+    final wireFrame = useAuth
+        ? PacketFrame(
+            type: type,
+            payloadId: payloadId,
+            sequence: sequence,
+            body: SecurityManager.encryptFrameBody(sessionKey, body),
+          )
+        : this;
+    final Uint8List prefix = wireFrame._rawHeaderAndBody(
+      authenticated: useAuth,
+    );
     if (!useAuth) {
       return prefix;
     }
@@ -105,6 +118,19 @@ class PacketFrame {
     if (authTag == null) return false;
     final prefix = _rawHeaderAndBody(authenticated: true);
     return SecurityManager.verifyHmac(sessionKey, prefix, authTag!);
+  }
+
+  /// Verifies and decrypts an authenticated session frame.
+  PacketFrame decrypt(Uint8List sessionKey) {
+    if (!verifyAuthTag(sessionKey)) {
+      throw const FormatException('Invalid frame authentication tag');
+    }
+    return PacketFrame(
+      type: type,
+      payloadId: payloadId,
+      sequence: sequence,
+      body: SecurityManager.decryptFrameBody(sessionKey, body),
+    );
   }
 
   /// Parses a complete frame from a byte buffer.
@@ -137,8 +163,13 @@ class PacketFrame {
       return null; // Incomplete packet
     }
 
-    final int expectedCrc = byteData.getUint32(kHeaderLength + bodyLength, Endian.big);
-    final int actualCrc = Crc32.compute(bytes.sublist(0, kHeaderLength + bodyLength));
+    final int expectedCrc = byteData.getUint32(
+      kHeaderLength + bodyLength,
+      Endian.big,
+    );
+    final int actualCrc = Crc32.compute(
+      bytes.sublist(0, kHeaderLength + bodyLength),
+    );
 
     if (expectedCrc != actualCrc) {
       // Checksum mismatch
@@ -163,7 +194,10 @@ class PacketFrame {
       }
     }
 
-    final Uint8List body = bytes.sublist(kHeaderLength, kHeaderLength + bodyLength);
+    final Uint8List body = bytes.sublist(
+      kHeaderLength,
+      kHeaderLength + bodyLength,
+    );
     return PacketFrame(
       type: type,
       payloadId: payloadId,
@@ -217,10 +251,7 @@ class PacketFrame {
 
   /// Creates a heartbeat frame.
   factory PacketFrame.heartbeat() {
-    return PacketFrame(
-      type: FrameType.heartbeat,
-      body: Uint8List(0),
-    );
+    return PacketFrame(type: FrameType.heartbeat, body: Uint8List(0));
   }
 
   /// Creates a disconnect frame.
@@ -266,10 +297,7 @@ class PacketFrame {
   }
 
   /// Creates a payload ack frame.
-  factory PacketFrame.payloadAck({
-    required int payloadId,
-    int sequence = 0,
-  }) {
+  factory PacketFrame.payloadAck({required int payloadId, int sequence = 0}) {
     return PacketFrame(
       type: FrameType.payloadAck,
       payloadId: payloadId,
@@ -279,10 +307,7 @@ class PacketFrame {
   }
 
   /// Creates a payload cancellation frame.
-  factory PacketFrame.payloadCancel({
-    required int payloadId,
-    String? reason,
-  }) {
+  factory PacketFrame.payloadCancel({required int payloadId, String? reason}) {
     final payload = jsonEncode({'reason': reason ?? 'Transfer cancelled'});
     return PacketFrame(
       type: FrameType.payloadCancel,
@@ -348,15 +373,18 @@ class PacketFramer {
         continue;
       }
       final int authTagLength = hasAuthTag ? 32 : 0;
-      final int frameTotalLength = kHeaderLength + bodyLength + 4 + authTagLength;
+      final int frameTotalLength =
+          kHeaderLength + bodyLength + 4 + authTagLength;
 
       if (offset + frameTotalLength > currentBytes.length) {
         // Incomplete frame, wait for more data
         break;
       }
 
-      final Uint8List frameBytes =
-          currentBytes.sublist(offset, offset + frameTotalLength);
+      final Uint8List frameBytes = currentBytes.sublist(
+        offset,
+        offset + frameTotalLength,
+      );
       final PacketFrame? frame = PacketFrame.fromBytes(frameBytes);
 
       if (frame != null) {

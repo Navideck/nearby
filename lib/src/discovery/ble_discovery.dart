@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
+
 import '../models/peer.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
 import '../transport/ble_transport.dart';
@@ -34,22 +36,18 @@ class BleDiscoveryService {
       BlePeripheralTransport.incomingTransports;
 
   /// Starts BLE scanning for devices advertising the nearby service UUID.
-  Future<void> startScanning({
-    String? serviceUuid,
-    String? serviceId,
-  }) async {
+  Future<void> startScanning({String? serviceUuid, String? serviceId}) async {
     await stopScanning();
     _isScanning = true;
     _currentServiceId = serviceId;
 
-    _currentTargetUuid = serviceUuid ??
+    _currentTargetUuid =
+        serviceUuid ??
         (serviceId != null
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
 
-    await BleScanDispatcher.instance.addListener(
-      _handleScanResult,
-    );
+    await BleScanDispatcher.instance.addListener(_handleScanResult);
   }
 
   void _handleScanResult(BleDevice device) {
@@ -61,8 +59,9 @@ class BleDiscoveryService {
     final hasService = device.services.any(
       (s) => BleUuidParser.compareStrings(s, targetUuid),
     );
-    final hasMfg =
-        device.manufacturerDataList.any((m) => m.companyId == 0xFFFF);
+    final hasMfg = device.manufacturerDataList.any(
+      (m) => m.companyId == 0xFFFF,
+    );
 
     // Filter out unrelated BLE devices in the environment
     if (!hasService && !hasMfg) return;
@@ -86,7 +85,10 @@ class BleDiscoveryService {
                 );
               }
             } else if (mfg.payload[0] == 0x01 && mfg.payload.length > 1) {
-              peerId = utf8.decode(mfg.payload.sublist(1), allowMalformed: true);
+              peerId = utf8.decode(
+                mfg.payload.sublist(1),
+                allowMalformed: true,
+              );
             } else if (decoded.trim().isNotEmpty) {
               peerId = decoded.trim();
             }
@@ -96,7 +98,9 @@ class BleDiscoveryService {
     }
 
     // Enforce serviceId filtering if configured
-    if (serviceId != null && advertisedSid != null && advertisedSid != serviceId) {
+    if (serviceId != null &&
+        advertisedSid != null &&
+        advertisedSid != serviceId) {
       return;
     }
 
@@ -136,8 +140,12 @@ class BleDiscoveryService {
       return kNearbyBleServiceUuid;
     }
     final digest = sha256.convert(utf8.encode(serviceId)).bytes;
-    final hex = digest.take(16).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}'.toLowerCase();
+    final hex = digest
+        .take(16)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}'
+        .toLowerCase();
   }
 
   StreamSubscription? _advertisingStateSub;
@@ -161,8 +169,7 @@ class BleDiscoveryService {
       return jsonBytes;
     }
 
-    final boundedPeerId =
-        peerId.length > 26 ? peerId.substring(0, 26) : peerId;
+    final boundedPeerId = peerId.length > 26 ? peerId.substring(0, 26) : peerId;
     return Uint8List.fromList([0x01, ...utf8.encode(boundedPeerId)]);
   }
 
@@ -177,7 +184,8 @@ class BleDiscoveryService {
     await stopAdvertising();
     _isAdvertising = true;
 
-    final targetUuid = serviceUuid ??
+    final targetUuid =
+        serviceUuid ??
         (serviceId != null
             ? generateServiceUuid(serviceId)
             : kNearbyBleServiceUuid);
@@ -216,7 +224,10 @@ class BleDiscoveryService {
         Uint8List? value,
       ) {
         if (value != null && value.isNotEmpty) {
-          if (BleUuidParser.compareStrings(characteristicId, kNearbyBleTxCharUuid)) {
+          if (BleUuidParser.compareStrings(
+            characteristicId,
+            kNearbyBleTxCharUuid,
+          )) {
             BlePeripheralTransport.handleIncomingWrite(deviceId, value);
           }
         }
@@ -232,23 +243,27 @@ class BleDiscoveryService {
         return PeripheralReadRequestResult(value: Uint8List(0), status: 0);
       });
 
-      _connectionStateSub =
-          UniversalBlePeripheral.connectionStateStream.listen((event) {
-        if (!event.connected) {
-          BlePeripheralTransport.handleDisconnected(event.deviceId);
-        }
-      });
+      _connectionStateSub = UniversalBlePeripheral.connectionStateStream.listen(
+        (event) {
+          if (!event.connected) {
+            BlePeripheralTransport.handleDisconnected(event.deviceId);
+          }
+        },
+      );
 
       _mtuSub = UniversalBlePeripheral.mtuChangedStream.listen((event) {
-        BlePeripheralTransport.handleMtuChanged(event.deviceId, event.mtu.toInt());
+        BlePeripheralTransport.handleMtuChanged(
+          event.deviceId,
+          event.mtu.toInt(),
+        );
       });
 
-      _advertisingStateSub =
-          UniversalBlePeripheral.advertisingStateStream.listen((event) {
-        if (event.state == PeripheralAdvertisingState.error) {
-          debugPrint('UniversalBle BLE Advertising Error: ${event.error}');
-        }
-      });
+      _advertisingStateSub = UniversalBlePeripheral.advertisingStateStream
+          .listen((event) {
+            if (event.state == PeripheralAdvertisingState.error) {
+              debugPrint('UniversalBle BLE Advertising Error: ${event.error}');
+            }
+          });
 
       // Set up GATT Server service and characteristics
       final service = BlePeripheralService(
@@ -260,9 +275,7 @@ class BleDiscoveryService {
               CharacteristicProperty.write,
               CharacteristicProperty.writeWithoutResponse,
             ],
-            permissions: [
-              PeripheralAttributePermission.writeable,
-            ],
+            permissions: [PeripheralAttributePermission.writeable],
           ),
           BlePeripheralCharacteristic(
             uuid: kNearbyBleRxCharUuid,
@@ -270,9 +283,7 @@ class BleDiscoveryService {
               CharacteristicProperty.notify,
               CharacteristicProperty.read,
             ],
-            permissions: [
-              PeripheralAttributePermission.readable,
-            ],
+            permissions: [PeripheralAttributePermission.readable],
           ),
         ],
       );
@@ -280,8 +291,9 @@ class BleDiscoveryService {
       await UniversalBlePeripheral.clearServices();
       await UniversalBlePeripheral.addService(service);
 
-      final advertiseLocalName =
-          defaultTargetPlatform == TargetPlatform.android ? null : truncatedName;
+      final advertiseLocalName = defaultTargetPlatform == TargetPlatform.android
+          ? null
+          : truncatedName;
 
       await UniversalBlePeripheral.startAdvertising(
         services: [targetUuid],
@@ -301,6 +313,12 @@ class BleDiscoveryService {
 
   /// Stops BLE peripheral advertising.
   Future<void> stopAdvertising() async {
+    if (!_isAdvertising &&
+        _connectionStateSub == null &&
+        _mtuSub == null &&
+        _advertisingStateSub == null) {
+      return;
+    }
     _isAdvertising = false;
     await _connectionStateSub?.cancel();
     _connectionStateSub = null;

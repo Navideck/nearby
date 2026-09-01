@@ -1,9 +1,20 @@
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 
 void main() {
+  test(
+    'AdvertisingOptions falls back from a busy preferred port by default',
+    () {
+      const options = AdvertisingOptions(serviceId: 'nearby-test', port: 9877);
+
+      expect(options.port, 9877);
+      expect(options.fallbackToDynamicPort, isTrue);
+    },
+  );
+
   group('Peer Model', () {
     test('Peer JSON serialization and deserialization roundtrip', () {
       final now = DateTime.now();
@@ -36,7 +47,7 @@ void main() {
       final peer = Peer(
         id: 'p1',
         displayName: 'Device 1',
-        discoveredVia: DiscoveryMedium.mdns,
+        discoveredVia: DiscoveryMedium.network,
         lastSeen: DateTime.now(),
       );
 
@@ -56,7 +67,7 @@ void main() {
       final peer1 = Peer(
         id: 'same_id',
         displayName: 'Name 1',
-        discoveredVia: DiscoveryMedium.mdns,
+        discoveredVia: DiscoveryMedium.network,
         lastSeen: DateTime.now(),
       );
       final peer2 = Peer(
@@ -149,10 +160,10 @@ void main() {
     test('DiscoveryOptions configuration', () {
       const options = DiscoveryOptions(
         serviceId: 'test-app',
-        strategy: DiscoveryStrategy.mdnsOnly,
+        strategy: DiscoveryStrategy.networkOnly,
         metadataFilter: {'env': 'prod'},
       );
-      expect(options.strategy, equals(DiscoveryStrategy.mdnsOnly));
+      expect(options.strategy, equals(DiscoveryStrategy.networkOnly));
       expect(options.metadataFilter?['env'], equals('prod'));
     });
 

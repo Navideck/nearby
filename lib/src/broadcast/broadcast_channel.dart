@@ -4,12 +4,13 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
-import '../models/nearby_options.dart';
-import '../models/peer.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
 import 'broadcast_packet.dart';
 import 'broadcast_wire.dart';
 import 'multicast_transport.dart';
+
+/// Transports used by a broadcast channel.
+enum DiscoveryStrategy { hybrid, networkOnly, bleOnly }
 
 class BroadcastChannelConfig {
   final String channelId;
@@ -65,7 +66,7 @@ class BroadcastChannel {
   Stream<BroadcastPacket> get stream => _packets.stream;
   Stream<BroadcastFailure> get errors => _errors.stream;
   bool get _networkEnabled => config.strategy != DiscoveryStrategy.bleOnly;
-  bool get _bleEnabled => config.strategy != DiscoveryStrategy.mdnsOnly;
+  bool get _bleEnabled => config.strategy != DiscoveryStrategy.networkOnly;
 
   void _fail(DiscoveryMedium medium, Object error) {
     if (!_errors.isClosed) _errors.add(BroadcastFailure(medium, error));
@@ -97,7 +98,7 @@ class BroadcastChannel {
       try {
         await _network.startSending();
       } catch (e) {
-        _fail(DiscoveryMedium.mdns, e);
+        _fail(DiscoveryMedium.network, e);
       }
     }
   }
@@ -156,7 +157,7 @@ class BroadcastChannel {
       attributes ?? {},
     );
     if (!_network.send(bytes)) {
-      _fail(DiscoveryMedium.mdns, StateError('No datagram sent'));
+      _fail(DiscoveryMedium.network, StateError('No datagram sent'));
     }
   }
 
@@ -242,7 +243,7 @@ class BroadcastChannel {
                   fullSenderId: envelope.attributes['nearby.sender'],
                   deviceName: envelope.attributes['nearby.name'],
                   address: datagram.address.address,
-                  medium: DiscoveryMedium.mdns,
+                  medium: DiscoveryMedium.network,
                   receivedAt: receivedAt,
                   attributes: Map.unmodifiable(
                     Map.of(envelope.attributes)
@@ -253,10 +254,10 @@ class BroadcastChannel {
             });
             available = true;
           } catch (e) {
-            _fail(DiscoveryMedium.mdns, e);
+            _fail(DiscoveryMedium.network, e);
           }
         }(),
-      if (_bleEnabled && strategy != DiscoveryStrategy.mdnsOnly)
+      if (_bleEnabled && strategy != DiscoveryStrategy.networkOnly)
         () async {
           try {
             _bleScanning = true;

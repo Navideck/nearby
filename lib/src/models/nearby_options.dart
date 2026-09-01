@@ -1,15 +1,5 @@
-/// Strategy determining how peers are discovered and connected.
-enum DiscoveryStrategy {
-  /// Hybrid: Advertises and scans over both mDNS (Local Network) and BLE.
-  /// Provides the highest discovery speed and connection success rate.
-  hybrid,
-
-  /// mDNS Only: Broadcasts and browses exclusively on local network via Bonjour/mDNS.
-  mdnsOnly,
-
-  /// BLE Only: Advertises and scans exclusively via Bluetooth Low Energy.
-  bleOnly,
-}
+import '../broadcast/broadcast_channel.dart';
+export '../broadcast/broadcast_channel.dart' show DiscoveryStrategy;
 
 /// Security mode for peer connections.
 enum SecurityMode {
@@ -34,6 +24,9 @@ class AdvertisingOptions {
   /// Preferred TCP port to listen on for LAN connections (0 or null for dynamic port).
   final int? port;
 
+  /// Whether a busy preferred [port] should fall back to a dynamic port.
+  final bool fallbackToDynamicPort;
+
   /// Security / authentication mode.
   final SecurityMode securityMode;
 
@@ -42,6 +35,7 @@ class AdvertisingOptions {
     this.metadata = const {},
     this.strategy = DiscoveryStrategy.hybrid,
     this.port,
+    this.fallbackToDynamicPort = true,
     this.securityMode = SecurityMode.autoAccept,
   });
 }

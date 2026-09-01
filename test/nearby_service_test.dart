@@ -262,7 +262,7 @@ void main() {
     );
   });
 
-    group('DiscoveryCoordinator Tests', () {
+  group('DiscoveryCoordinator Tests', () {
     test(
       'Ignores self-discovery when incoming peer ID matches localPeerId',
       () {
@@ -302,48 +302,63 @@ void main() {
       expect(peerId, equals('8c17b5e43a9f1a2b'));
     });
 
-    test('Bounds long peer IDs to strictly 26 characters in compact fallback', () {
-      final longId = 'a' * 60;
-      final payload = BleDiscoveryService.createManufacturerPayload(
-        peerId: longId,
-        serviceId: 'nearby-service',
-      );
+    test(
+      'Bounds long peer IDs to strictly 26 characters in compact fallback',
+      () {
+        final longId = 'a' * 60;
+        final payload = BleDiscoveryService.createManufacturerPayload(
+          peerId: longId,
+          serviceId: 'nearby-service',
+        );
 
-      expect(payload.length, equals(27));
-      expect(payload.first, equals(0x01));
-      expect(payload.sublist(1).length, equals(26));
-      expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
-    });
+        expect(payload.length, equals(27));
+        expect(payload.first, equals(0x01));
+        expect(payload.sublist(1).length, equals(26));
+        expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
+      },
+    );
   });
 
   group('NearbyService Broadcast Channel Integration Tests', () {
-    test('createBroadcastChannel creates and tracks managed channels', () async {
-      final service = NearbyService(localPeerId: 'test_node', localDisplayName: 'Node 1');
-      expect(service.activeBroadcastChannels, isEmpty);
+    test(
+      'createBroadcastChannel creates and tracks managed channels',
+      () async {
+        final service = NearbyService(
+          localPeerId: 'test_node',
+          localDisplayName: 'Node 1',
+        );
+        expect(service.activeBroadcastChannels, isEmpty);
 
-      final channel = service.createBroadcastChannel(
-        const BroadcastChannelConfig(
-          channelId: 'custom-ch',
-          strategy: DiscoveryStrategy.hybrid,
-        ),
-      );
+        final channel = service.createBroadcastChannel(
+          const BroadcastChannelConfig(
+            channelId: 'custom-ch',
+            strategy: DiscoveryStrategy.hybrid,
+          ),
+        );
 
-      expect(service.activeBroadcastChannels.length, 1);
-      expect(service.activeBroadcastChannels.first, equals(channel));
-      expect(channel.config.channelId, equals('custom-ch'));
+        expect(service.activeBroadcastChannels.length, 1);
+        expect(service.activeBroadcastChannels.first, equals(channel));
+        expect(channel.config.channelId, equals('custom-ch'));
 
-      await service.dispose();
-      expect(service.activeBroadcastChannels, isEmpty);
-    });
+        await service.dispose();
+        expect(service.activeBroadcastChannels, isEmpty);
+      },
+    );
 
-    test('defaultBroadcastChannel exposes convenience broadcast and stream', () async {
-      final service = NearbyService(localPeerId: 'test_node', localDisplayName: 'Node 1');
-      final channel = service.defaultBroadcastChannel;
-      expect(channel, isNotNull);
-      expect(channel.config.channelId, equals('nearby-default'));
-      expect(service.onBroadcastReceived, isNotNull);
+    test(
+      'defaultBroadcastChannel exposes convenience broadcast and stream',
+      () async {
+        final service = NearbyService(
+          localPeerId: 'test_node',
+          localDisplayName: 'Node 1',
+        );
+        final channel = service.defaultBroadcastChannel;
+        expect(channel, isNotNull);
+        expect(channel.config.channelId, equals('nearby-default'));
+        expect(service.onBroadcastReceived, isNotNull);
 
-      await service.dispose();
-    });
+        await service.dispose();
+      },
+    );
   });
 }

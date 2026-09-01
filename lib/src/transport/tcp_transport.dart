@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+
 import '../protocol/packet_framer.dart';
 import 'transport.dart';
 
@@ -75,7 +76,10 @@ class TcpTransport implements NearbyTransport {
   Future<void> _writeQueue = Future.value();
 
   Future<T> _synchronizedWrite<T>(Future<T> Function() operation) {
-    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
+    final next = _writeQueue.then(
+      (_) => operation(),
+      onError: (_) => operation(),
+    );
     _writeQueue = next.then((_) {}, onError: (_) {});
     return next;
   }

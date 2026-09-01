@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import '../models/payload.dart';
 import '../protocol/packet_framer.dart';
 import '../transport/transport.dart';
@@ -92,8 +93,10 @@ class PayloadManager {
     this.maxFilePayloadSize = 2 * 1024 * 1024 * 1024,
   });
 
-  Stream<NearbyPayload> get onPayloadReceived => _payloadReceivedController.stream;
-  Stream<PayloadTransferUpdate> get onProgressUpdate => _progressController.stream;
+  Stream<NearbyPayload> get onPayloadReceived =>
+      _payloadReceivedController.stream;
+  Stream<PayloadTransferUpdate> get onProgressUpdate =>
+      _progressController.stream;
 
   _IncomingPayloadState? _findIncomingState(String peerId, int payloadId) {
     return _incomingPayloads[_payloadKey(peerId, payloadId)];
@@ -130,7 +133,9 @@ class PayloadManager {
     while (offset < totalBytes) {
       if (_isCancelled(transport.peerId, payloadId)) {
         _pendingOutgoingAcks.remove(key);
-        await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
+        await transport.sendFrame(
+          PacketFrame.payloadCancel(payloadId: payloadId),
+        );
         _progressController.add(
           PayloadTransferUpdate(
             payloadId: payloadId,
@@ -143,7 +148,9 @@ class PayloadManager {
         return;
       }
 
-      final int end = (offset + chunkSize < totalBytes) ? offset + chunkSize : totalBytes;
+      final int end = (offset + chunkSize < totalBytes)
+          ? offset + chunkSize
+          : totalBytes;
       final Uint8List chunk = bytes.sublist(offset, end);
 
       await transport.sendFrame(
@@ -248,7 +255,9 @@ class PayloadManager {
     await for (final block in stream) {
       if (_isCancelled(transport.peerId, payloadId)) {
         _pendingOutgoingAcks.remove(key);
-        await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
+        await transport.sendFrame(
+          PacketFrame.payloadCancel(payloadId: payloadId),
+        );
         _progressController.add(
           PayloadTransferUpdate(
             payloadId: payloadId,
@@ -367,7 +376,9 @@ class PayloadManager {
 
     await for (final block in stream) {
       if (_isCancelled(transport.peerId, payloadId)) {
-        await transport.sendFrame(PacketFrame.payloadCancel(payloadId: payloadId));
+        await transport.sendFrame(
+          PacketFrame.payloadCancel(payloadId: payloadId),
+        );
         _progressController.add(
           PayloadTransferUpdate(
             payloadId: payloadId,
@@ -426,7 +437,8 @@ class PayloadManager {
   }) async {
     switch (frame.type) {
       case FrameType.payloadHeader:
-        final json = jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final json =
+            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         final String typeStr = json['type'] as String;
         final int totalBytes = json['totalBytes'] as int;
         final String? fileName = json['fileName'] as String?;
@@ -449,7 +461,8 @@ class PayloadManager {
               bytesTransferred: 0,
               totalBytes: totalBytes,
               status: PayloadStatus.failure,
-              error: 'Declared payload size ($totalBytes bytes) exceeds maximum bytes limit ($maxBytesPayloadSize bytes)',
+              error:
+                  'Declared payload size ($totalBytes bytes) exceeds maximum bytes limit ($maxBytesPayloadSize bytes)',
             ),
           );
           return;
@@ -463,7 +476,8 @@ class PayloadManager {
               bytesTransferred: 0,
               totalBytes: totalBytes,
               status: PayloadStatus.failure,
-              error: 'Declared file size ($totalBytes bytes) exceeds maximum file limit ($maxFilePayloadSize bytes)',
+              error:
+                  'Declared file size ($totalBytes bytes) exceeds maximum file limit ($maxFilePayloadSize bytes)',
             ),
           );
           return;
@@ -479,7 +493,8 @@ class PayloadManager {
 
         if (type == PayloadType.file) {
           final dir = storageDirectory ?? Directory.systemTemp;
-          final uniqueName = 'nearby_${frame.payloadId}_${DateTime.now().microsecondsSinceEpoch}.tmp';
+          final uniqueName =
+              'nearby_${frame.payloadId}_${DateTime.now().microsecondsSinceEpoch}.tmp';
           state.tempFile = File('${dir.path}/$uniqueName');
           state.fileSink = state.tempFile!.openWrite();
         }
@@ -507,7 +522,11 @@ class PayloadManager {
               status: PayloadStatus.success,
             ),
           );
-          await _finishIncomingPayload(peerId, frame.payloadId, transport: transport);
+          await _finishIncomingPayload(
+            peerId,
+            frame.payloadId,
+            transport: transport,
+          );
           break;
         }
 
@@ -565,12 +584,18 @@ class PayloadManager {
             peerId: state.peerId,
             bytesTransferred: state.bytesReceived,
             totalBytes: state.totalBytes,
-            status: isCompleted ? PayloadStatus.success : PayloadStatus.inProgress,
+            status: isCompleted
+                ? PayloadStatus.success
+                : PayloadStatus.inProgress,
           ),
         );
 
         if (isCompleted) {
-          await _finishIncomingPayload(state.peerId, frame.payloadId, transport: transport);
+          await _finishIncomingPayload(
+            state.peerId,
+            frame.payloadId,
+            transport: transport,
+          );
         }
         break;
 
@@ -578,7 +603,11 @@ class PayloadManager {
         // Acknowledge stream end or byte/file reception
         final state = _findIncomingState(peerId, frame.payloadId);
         if (state != null && state.type == PayloadType.stream) {
-          await _finishIncomingPayload(state.peerId, frame.payloadId, transport: transport);
+          await _finishIncomingPayload(
+            state.peerId,
+            frame.payloadId,
+            transport: transport,
+          );
         }
 
         // Complete outgoing transfer waiter if this is an ACK for an outgoing payload
@@ -590,7 +619,9 @@ class PayloadManager {
         break;
 
       case FrameType.payloadCancel:
-        final state = _incomingPayloads.remove(_payloadKey(peerId, frame.payloadId));
+        final state = _incomingPayloads.remove(
+          _payloadKey(peerId, frame.payloadId),
+        );
         if (state != null) {
           await state.cleanup();
           _progressController.add(
@@ -643,7 +674,9 @@ class PayloadManager {
     }
 
     // Send ACK back to sender for non-stream transfers
-    if (state.type != PayloadType.stream && transport != null && transport.isConnected) {
+    if (state.type != PayloadType.stream &&
+        transport != null &&
+        transport.isConnected) {
       try {
         await transport.sendFrame(PacketFrame.payloadAck(payloadId: payloadId));
       } catch (_) {}

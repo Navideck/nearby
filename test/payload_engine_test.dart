@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 
@@ -103,71 +104,86 @@ void main() {
       }
     });
 
-    test('Transfers byte array payload with progress updates and reassembly', () async {
-      final payloadData = Uint8List.fromList(List.generate(1000, (i) => i % 256));
-      final progressList = <PayloadTransferUpdate>[];
+    test(
+      'Transfers byte array payload with progress updates and reassembly',
+      () async {
+        final payloadData = Uint8List.fromList(
+          List.generate(1000, (i) => i % 256),
+        );
+        final progressList = <PayloadTransferUpdate>[];
 
-      senderPayloadManager.onProgressUpdate.listen(progressList.add);
+        senderPayloadManager.onProgressUpdate.listen(progressList.add);
 
-      final receivedCompleter = Completer<NearbyPayload>();
-      receiverPayloadManager.onPayloadReceived.listen((payload) {
-        if (!receivedCompleter.isCompleted) {
-          receivedCompleter.complete(payload);
-        }
-      });
+        final receivedCompleter = Completer<NearbyPayload>();
+        receiverPayloadManager.onPayloadReceived.listen((payload) {
+          if (!receivedCompleter.isCompleted) {
+            receivedCompleter.complete(payload);
+          }
+        });
 
-      await senderPayloadManager.sendBytes(
-        transport: senderTransport,
-        payloadId: 1001,
-        bytes: payloadData,
-        chunkSize: 200, // Force 5 chunks
-      );
+        await senderPayloadManager.sendBytes(
+          transport: senderTransport,
+          payloadId: 1001,
+          bytes: payloadData,
+          chunkSize: 200, // Force 5 chunks
+        );
 
-      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+        final received = await receivedCompleter.future.timeout(
+          const Duration(seconds: 5),
+        );
 
-      expect(received.type, equals(PayloadType.bytes));
-      expect(received.bytes, isNotNull);
-      expect(received.bytes!.length, equals(1000));
-      expect(received.bytes, equals(payloadData));
+        expect(received.type, equals(PayloadType.bytes));
+        expect(received.bytes, isNotNull);
+        expect(received.bytes!.length, equals(1000));
+        expect(received.bytes, equals(payloadData));
 
-      expect(progressList.isNotEmpty, isTrue);
-      expect(progressList.last.status, equals(PayloadStatus.success));
-      expect(progressList.last.bytesTransferred, equals(1000));
-    });
+        expect(progressList.isNotEmpty, isTrue);
+        expect(progressList.last.status, equals(PayloadStatus.success));
+        expect(progressList.last.bytesTransferred, equals(1000));
+      },
+    );
 
-    test('Transfers disk file with progress updates and verified file content', () async {
-      final testFile = File('${tempDir.path}/sample_source.txt');
-      final originalText = 'Hello Nearby World!' * 100;
-      testFile.writeAsStringSync(originalText);
+    test(
+      'Transfers disk file with progress updates and verified file content',
+      () async {
+        final testFile = File('${tempDir.path}/sample_source.txt');
+        final originalText = 'Hello Nearby World!' * 100;
+        testFile.writeAsStringSync(originalText);
 
-      final progressList = <PayloadTransferUpdate>[];
-      senderPayloadManager.onProgressUpdate.listen(progressList.add);
+        final progressList = <PayloadTransferUpdate>[];
+        senderPayloadManager.onProgressUpdate.listen(progressList.add);
 
-      final receivedCompleter = Completer<NearbyPayload>();
-      receiverPayloadManager.onPayloadReceived.listen((payload) {
-        if (!receivedCompleter.isCompleted) {
-          receivedCompleter.complete(payload);
-        }
-      });
+        final receivedCompleter = Completer<NearbyPayload>();
+        receiverPayloadManager.onPayloadReceived.listen((payload) {
+          if (!receivedCompleter.isCompleted) {
+            receivedCompleter.complete(payload);
+          }
+        });
 
-      await senderPayloadManager.sendFile(
-        transport: senderTransport,
-        payloadId: 2002,
-        file: testFile,
-        customFileName: 'received_doc.txt',
-        chunkSize: 128,
-      );
+        await senderPayloadManager.sendFile(
+          transport: senderTransport,
+          payloadId: 2002,
+          file: testFile,
+          customFileName: 'received_doc.txt',
+          chunkSize: 128,
+        );
 
-      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+        final received = await receivedCompleter.future.timeout(
+          const Duration(seconds: 5),
+        );
 
-      expect(received.type, equals(PayloadType.file));
-      expect(received.file, isNotNull);
-      expect(received.file!.existsSync(), isTrue);
-      expect(received.fileName, equals('received_doc.txt'));
-      expect(received.file!.readAsStringSync(), equals(originalText));
+        expect(received.type, equals(PayloadType.file));
+        expect(received.file, isNotNull);
+        expect(received.file!.existsSync(), isTrue);
+        expect(received.fileName, equals('received_doc.txt'));
+        expect(received.file!.readAsStringSync(), equals(originalText));
 
-      expect(progressList.any((p) => p.status == PayloadStatus.success), isTrue);
-    });
+        expect(
+          progressList.any((p) => p.status == PayloadStatus.success),
+          isTrue,
+        );
+      },
+    );
 
     test('Transfers continuous byte stream', () async {
       final streamController = StreamController<List<int>>();
@@ -186,7 +202,9 @@ void main() {
       );
 
       // Wait for receiver to get stream payload
-      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+      final received = await receivedCompleter.future.timeout(
+        const Duration(seconds: 5),
+      );
       expect(received.type, equals(PayloadType.stream));
       expect(received.stream, isNotNull);
 
@@ -229,12 +247,17 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(progressList.any((p) => p.status == PayloadStatus.canceled), isTrue);
+      expect(
+        progressList.any((p) => p.status == PayloadStatus.canceled),
+        isTrue,
+      );
     });
 
     test('Transfers file successfully with interleaved concurrent frames without hanging', () async {
       final senderFile = File('${tempDir.path}/large_sender_test.bin');
-      final payloadData = Uint8List.fromList(List.generate(256 * 1024, (i) => (i * 7) % 256));
+      final payloadData = Uint8List.fromList(
+        List.generate(256 * 1024, (i) => (i * 7) % 256),
+      );
       senderFile.writeAsBytesSync(payloadData);
 
       final receivedCompleter = Completer<NearbyPayload>();
@@ -253,17 +276,21 @@ void main() {
       );
 
       // Concurrently send separate frames while file transfer is in progress
-      unawaited(Future.microtask(() async {
-        for (int i = 0; i < 5; i++) {
-          await Future.delayed(const Duration(milliseconds: 15));
-          if (senderTransport.isConnected) {
-            await senderTransport.sendFrame(PacketFrame.heartbeat());
+      unawaited(
+        Future.microtask(() async {
+          for (int i = 0; i < 5; i++) {
+            await Future.delayed(const Duration(milliseconds: 15));
+            if (senderTransport.isConnected) {
+              await senderTransport.sendFrame(PacketFrame.heartbeat());
+            }
           }
-        }
-      }));
+        }),
+      );
 
       await sendFuture;
-      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+      final received = await receivedCompleter.future.timeout(
+        const Duration(seconds: 5),
+      );
 
       expect(received.type, equals(PayloadType.file));
       expect(received.file, isNotNull);
@@ -286,7 +313,9 @@ void main() {
         bytes: Uint8List(0),
       );
 
-      final received = await receivedCompleter.future.timeout(const Duration(seconds: 5));
+      final received = await receivedCompleter.future.timeout(
+        const Duration(seconds: 5),
+      );
       expect(received.type, equals(PayloadType.bytes));
       expect(received.peerId, equals(receiverTransport.peerId));
       expect(received.bytes, isNotNull);
@@ -304,7 +333,8 @@ void main() {
         throwsArgumentError,
       );
 
-      final testFile = File('${tempDir.path}/test_chunk.bin')..writeAsBytesSync([1, 2, 3]);
+      final testFile = File('${tempDir.path}/test_chunk.bin')
+        ..writeAsBytesSync([1, 2, 3]);
       expect(
         () => senderPayloadManager.sendFile(
           transport: senderTransport,
@@ -342,7 +372,10 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(progressList.any((p) => p.status == PayloadStatus.failure), isTrue);
+      expect(
+        progressList.any((p) => p.status == PayloadStatus.failure),
+        isTrue,
+      );
     });
 
     test('Cancels outgoing payload scoped strictly to target peer', () async {
@@ -363,51 +396,72 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(
-        updates.any((u) => u.payloadId == 9001 && u.peerId == 'receiver_peer' && u.status == PayloadStatus.canceled),
+        updates.any(
+          (u) =>
+              u.payloadId == 9001 &&
+              u.peerId == 'receiver_peer' &&
+              u.status == PayloadStatus.canceled,
+        ),
         isTrue,
       );
 
       await peer2Transport.close();
     });
 
-    test('Rejects declared byte payload exceeding maxBytesPayloadSize', () async {
-      final customManager = PayloadManager(maxBytesPayloadSize: 1024);
-      final updates = <PayloadTransferUpdate>[];
-      customManager.onProgressUpdate.listen(updates.add);
+    test(
+      'Rejects declared byte payload exceeding maxBytesPayloadSize',
+      () async {
+        final customManager = PayloadManager(maxBytesPayloadSize: 1024);
+        final updates = <PayloadTransferUpdate>[];
+        customManager.onProgressUpdate.listen(updates.add);
 
-      await customManager.handleIncomingFrame(
-        peerId: 'peer_1',
-        frame: PacketFrame.payloadHeader(
-          payloadId: 1234,
-          payloadType: PayloadType.bytes.name,
-          totalBytes: 2048,
-        ),
-      );
+        await customManager.handleIncomingFrame(
+          peerId: 'peer_1',
+          frame: PacketFrame.payloadHeader(
+            payloadId: 1234,
+            payloadType: PayloadType.bytes.name,
+            totalBytes: 2048,
+          ),
+        );
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(updates.any((u) => u.payloadId == 1234 && u.status == PayloadStatus.failure), isTrue);
-      await customManager.dispose();
-    });
+        expect(
+          updates.any(
+            (u) => u.payloadId == 1234 && u.status == PayloadStatus.failure,
+          ),
+          isTrue,
+        );
+        await customManager.dispose();
+      },
+    );
 
-    test('Rejects declared file payload exceeding maxFilePayloadSize', () async {
-      final customManager = PayloadManager(maxFilePayloadSize: 1024 * 1024);
-      final updates = <PayloadTransferUpdate>[];
-      customManager.onProgressUpdate.listen(updates.add);
+    test(
+      'Rejects declared file payload exceeding maxFilePayloadSize',
+      () async {
+        final customManager = PayloadManager(maxFilePayloadSize: 1024 * 1024);
+        final updates = <PayloadTransferUpdate>[];
+        customManager.onProgressUpdate.listen(updates.add);
 
-      await customManager.handleIncomingFrame(
-        peerId: 'peer_1',
-        frame: PacketFrame.payloadHeader(
-          payloadId: 5678,
-          payloadType: PayloadType.file.name,
-          totalBytes: 50 * 1024 * 1024,
-        ),
-      );
+        await customManager.handleIncomingFrame(
+          peerId: 'peer_1',
+          frame: PacketFrame.payloadHeader(
+            payloadId: 5678,
+            payloadType: PayloadType.file.name,
+            totalBytes: 50 * 1024 * 1024,
+          ),
+        );
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(updates.any((u) => u.payloadId == 5678 && u.status == PayloadStatus.failure), isTrue);
-      await customManager.dispose();
-    });
+        expect(
+          updates.any(
+            (u) => u.payloadId == 5678 && u.status == PayloadStatus.failure,
+          ),
+          isTrue,
+        );
+        await customManager.dispose();
+      },
+    );
   });
 }

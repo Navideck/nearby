@@ -6,7 +6,10 @@ class DecodedBroadcastEnvelope {
   final Uint8List data;
   final Map<String, String> attributes;
 
-  const DecodedBroadcastEnvelope({required this.data, required this.attributes});
+  const DecodedBroadcastEnvelope({
+    required this.data,
+    required this.attributes,
+  });
 }
 
 /// Wraps opaque [data] together with small string key/value [attributes] into

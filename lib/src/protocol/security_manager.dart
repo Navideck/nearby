@@ -1,21 +1,21 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:crypto/crypto.dart';
+import 'package:pointycastle/export.dart';
 
 /// Ephemeral key pair for Diffie-Hellman authenticated key exchange.
 class SecurityKeyPair {
   final BigInt privateKey;
   final String publicKeyHex;
 
-  const SecurityKeyPair({
-    required this.privateKey,
-    required this.publicKeyHex,
-  });
+  const SecurityKeyPair({required this.privateKey, required this.publicKeyHex});
 }
 
 /// Manages ephemeral key exchange, authenticated transcript calculation, and Short Authentication String (SAS) calculation.
 class SecurityManager {
+  static const int encryptedFrameNonceLength = 12;
   static final Random _secureRandom = Random.secure();
 
   // RFC 3526 2048-bit MODP Group 14 Prime
@@ -44,7 +44,10 @@ class SecurityManager {
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     final priv = BigInt.parse(hex, radix: 16);
     final pub = dhGenerator.modPow(priv, dhPrime);
-    return SecurityKeyPair(privateKey: priv, publicKeyHex: pub.toRadixString(16));
+    return SecurityKeyPair(
+      privateKey: priv,
+      publicKeyHex: pub.toRadixString(16),
+    );
   }
 
   /// Generates a cryptographically secure random token or public key string.
@@ -102,7 +105,9 @@ class SecurityManager {
     int pinDigits = 4,
   }) {
     if (pinDigits != 4 && pinDigits != 6) {
-      throw ArgumentError('pinDigits must be either 4 or 6, but was $pinDigits');
+      throw ArgumentError(
+        'pinDigits must be either 4 or 6, but was $pinDigits',
+      );
     }
 
     final String transcriptDigest = computeTranscriptDigest(
@@ -114,8 +119,9 @@ class SecurityManager {
       metadata: metadata,
     );
 
-    final Uint8List bytes =
-        Uint8List.fromList(sha256.convert(utf8.encode(transcriptDigest)).bytes);
+    final Uint8List bytes = Uint8List.fromList(
+      sha256.convert(utf8.encode(transcriptDigest)).bytes,
+    );
 
     // Extract a 32-bit unsigned integer from the first 4 bytes of hash
     final ByteData byteData = ByteData.sublistView(bytes);
@@ -148,6 +154,59 @@ class SecurityManager {
     final okm = hmacExpand.convert([...info, 0x01]).bytes;
 
     return Uint8List.fromList(okm);
+  }
+
+  static Uint8List _deriveEncryptionKey(Uint8List sessionKey) {
+    return computeHmac(sessionKey, utf8.encode('nearby-frame-encryption'));
+  }
+
+  /// Encrypts a frame body with AES-256-GCM and prefixes its random nonce.
+  static Uint8List encryptFrameBody(Uint8List sessionKey, Uint8List body) {
+    final nonce = Uint8List.fromList(
+      List<int>.generate(
+        encryptedFrameNonceLength,
+        (_) => _secureRandom.nextInt(256),
+      ),
+    );
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(
+        true,
+        AEADParameters(
+          KeyParameter(_deriveEncryptionKey(sessionKey)),
+          128,
+          nonce,
+          Uint8List(0),
+        ),
+      );
+    final encrypted = cipher.process(body);
+    return Uint8List.fromList([...nonce, ...encrypted]);
+  }
+
+  /// Decrypts and authenticates a frame body produced by [encryptFrameBody].
+  static Uint8List decryptFrameBody(
+    Uint8List sessionKey,
+    Uint8List encryptedBody,
+  ) {
+    if (encryptedBody.length < encryptedFrameNonceLength + 16) {
+      throw const FormatException('Encrypted frame body is too short');
+    }
+    final nonce = encryptedBody.sublist(0, encryptedFrameNonceLength);
+    final ciphertext = encryptedBody.sublist(encryptedFrameNonceLength);
+    try {
+      final cipher = GCMBlockCipher(AESEngine())
+        ..init(
+          false,
+          AEADParameters(
+            KeyParameter(_deriveEncryptionKey(sessionKey)),
+            128,
+            nonce,
+            Uint8List(0),
+          ),
+        );
+      return cipher.process(ciphertext);
+    } on InvalidCipherTextException {
+      throw const FormatException('Encrypted frame authentication failed');
+    }
   }
 
   /// Computes an HMAC-SHA256 message authentication tag.

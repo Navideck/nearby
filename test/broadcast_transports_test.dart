@@ -197,7 +197,7 @@ void main() {
     final receiver = BroadcastChannel(config: config);
     final sender = BroadcastChannel(config: config, senderId: 'controller');
     final result = receiver.stream.first.timeout(const Duration(seconds: 3));
-    await receiver.startListening(strategy: DiscoveryStrategy.mdnsOnly);
+    await receiver.startListening(strategy: DiscoveryStrategy.networkOnly);
     await sender.sendNetwork(Uint8List.fromList(List.generate(64, (i) => i)));
     final packet = await result;
     expect(packet.fullSenderId, 'controller');
