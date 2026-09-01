@@ -190,26 +190,19 @@ void main() {
     );
     final port = temporary.port;
     temporary.close();
-    final receiverConfig = BroadcastChannelConfig(
+    final config = BroadcastChannelConfig(
       channelId: 'network-control-test',
-      strategy: DiscoveryStrategy.mdnsOnly,
       multicastPort: port,
     );
-    final senderConfig = BroadcastChannelConfig(
-      channelId: receiverConfig.channelId,
-      multicastPort: port,
-    );
-    final receiver = BroadcastChannel(config: receiverConfig);
-    final sender = BroadcastChannel(
-      config: senderConfig,
-      senderId: 'controller',
-    );
+    final receiver = BroadcastChannel(config: config);
+    final sender = BroadcastChannel(config: config, senderId: 'controller');
     final result = receiver.stream.first.timeout(const Duration(seconds: 3));
-    await receiver.startListening();
+    await receiver.startListening(strategy: DiscoveryStrategy.mdnsOnly);
     await sender.sendNetwork(Uint8List.fromList(List.generate(64, (i) => i)));
     final packet = await result;
     expect(packet.fullSenderId, 'controller');
     expect(packet.data, Uint8List.fromList(List.generate(64, (i) => i)));
+    expect(central.starts, 0);
     expect(peripheral.starts, 0);
     await sender.dispose();
     await receiver.dispose();

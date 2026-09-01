@@ -212,18 +212,22 @@ class BroadcastChannel {
     _advertisingState = null;
   }
 
-  Future<void> startListening() async {
+  /// Starts receiving through [strategy], constrained by [config].
+  ///
+  /// This lets a hybrid channel listen on one transport while continuing to
+  /// broadcast on both.
+  Future<void> startListening({DiscoveryStrategy? strategy}) async {
     if (_disposed) throw StateError('BroadcastChannel is disposed');
     if (_isListening) return _startingListen;
     _isListening = true;
-    _startingListen = _startListening();
+    _startingListen = _startListening(strategy ?? config.strategy);
     await _startingListen;
   }
 
-  Future<void> _startListening() async {
+  Future<void> _startListening(DiscoveryStrategy strategy) async {
     var available = false;
     await Future.wait([
-      if (_networkEnabled)
+      if (_networkEnabled && strategy != DiscoveryStrategy.bleOnly)
         () async {
           try {
             await _network.startListening((datagram, receivedAt) {
@@ -252,7 +256,7 @@ class BroadcastChannel {
             _fail(DiscoveryMedium.mdns, e);
           }
         }(),
-      if (_bleEnabled)
+      if (_bleEnabled && strategy != DiscoveryStrategy.mdnsOnly)
         () async {
           try {
             _bleScanning = true;

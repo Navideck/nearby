@@ -241,6 +241,9 @@ await channel.send(Uint8List.fromList([0x01, 0x02, 0x03, 0x04]), localName: 'Sla
 
 // Network-only control packets keep Nearby framing but are not advertised over BLE.
 await channel.sendNetwork(Uint8List.fromList([0x05, 0x06]));
+
+// A hybrid channel can also listen only on the network transport.
+await channel.startListening(strategy: DiscoveryStrategy.mdnsOnly);
 ```
 
 #### B. Convenience Service Broadcasts
