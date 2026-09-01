@@ -183,6 +183,38 @@ void main() {
     await receiver.dispose();
   });
 
+  test('network-only packets bypass BLE and keep Nearby framing', () async {
+    final temporary = await RawDatagramSocket.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final port = temporary.port;
+    temporary.close();
+    final receiverConfig = BroadcastChannelConfig(
+      channelId: 'network-control-test',
+      strategy: DiscoveryStrategy.mdnsOnly,
+      multicastPort: port,
+    );
+    final senderConfig = BroadcastChannelConfig(
+      channelId: receiverConfig.channelId,
+      multicastPort: port,
+    );
+    final receiver = BroadcastChannel(config: receiverConfig);
+    final sender = BroadcastChannel(
+      config: senderConfig,
+      senderId: 'controller',
+    );
+    final result = receiver.stream.first.timeout(const Duration(seconds: 3));
+    await receiver.startListening();
+    await sender.sendNetwork(Uint8List.fromList(List.generate(64, (i) => i)));
+    final packet = await result;
+    expect(packet.fullSenderId, 'controller');
+    expect(packet.data, Uint8List.fromList(List.generate(64, (i) => i)));
+    expect(peripheral.starts, 0);
+    await sender.dispose();
+    await receiver.dispose();
+  });
+
   test(
     'stop during in-flight BLE send prevents advertising from leaking',
     () async {

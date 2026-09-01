@@ -113,15 +113,7 @@ class BroadcastChannel {
     await _startingBroadcast;
     if (!_isBroadcasting) return;
     if (_networkEnabled) {
-      final bytes = _wire.encodeNetwork(
-        data,
-        senderId,
-        localName ?? displayName,
-        attributes ?? {},
-      );
-      if (!_network.send(bytes)) {
-        _fail(DiscoveryMedium.mdns, StateError('No datagram sent'));
-      }
+      _sendNetwork(data, localName: localName, attributes: attributes);
     }
     if (!_bleEnabled || _bleUnavailable || _bleSending != null) return;
     _bleSending = _sendBle(_wire.encode(data, senderId));
@@ -129,6 +121,42 @@ class BroadcastChannel {
       await _bleSending;
     } finally {
       _bleSending = null;
+    }
+  }
+
+  /// Sends a packet over the network transport only.
+  ///
+  /// This is useful for control traffic that has no BLE representation, such
+  /// as a response to a connectionless broadcast. The packet keeps the same
+  /// channel and sender framing as [send].
+  Future<void> sendNetwork(
+    Uint8List data, {
+    String? localName,
+    Map<String, String>? attributes,
+  }) async {
+    if (_disposed) throw StateError('BroadcastChannel is disposed');
+    if (!_networkEnabled) {
+      throw StateError('Network transport is disabled');
+    }
+    if (!_isBroadcasting) await startBroadcasting();
+    await _startingBroadcast;
+    if (!_isBroadcasting) return;
+    _sendNetwork(data, localName: localName, attributes: attributes);
+  }
+
+  void _sendNetwork(
+    Uint8List data, {
+    String? localName,
+    Map<String, String>? attributes,
+  }) {
+    final bytes = _wire.encodeNetwork(
+      data,
+      senderId,
+      localName ?? displayName,
+      attributes ?? {},
+    );
+    if (!_network.send(bytes)) {
+      _fail(DiscoveryMedium.mdns, StateError('No datagram sent'));
     }
   }
 
