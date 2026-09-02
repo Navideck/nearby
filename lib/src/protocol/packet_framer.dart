@@ -7,7 +7,7 @@ import 'security_manager.dart';
 /// Magic bytes identifying the Nearby protocol frame ('N', 'B').
 const int kMagicByte0 = 0x4E;
 const int kMagicByte1 = 0x42;
-const int kProtocolVersion = 2;
+const int kProtocolVersion = 3;
 const int kHeaderLength = 20; // 2 (magic) + 1 (version) + 1 (type) + 8 (payloadId) + 4 (sequence) + 4 (length)
 const int kMaxFrameBodyLength = 16 * 1024 * 1024; // 16 MB max frame body
 const int kMaxFramerBufferLength = 32 * 1024 * 1024; // 32 MB max buffer
@@ -22,7 +22,8 @@ enum FrameType {
   payloadHeader(0x10),
   payloadChunk(0x11),
   payloadAck(0x12),
-  payloadCancel(0x13);
+  payloadCancel(0x13),
+  handshakeConfirm(0x14);
 
   final int value;
   const FrameType(this.value);
@@ -215,12 +216,14 @@ class PacketFrame {
     required String displayName,
     required String token,
     Map<String, String> metadata = const {},
+    bool usesPreSharedKey = false,
   }) {
     final payload = jsonEncode({
       'peerId': peerId,
       'displayName': displayName,
       'token': token,
       'metadata': metadata,
+      'authentication': usesPreSharedKey ? 'preSharedKey' : 'default',
     });
     return PacketFrame(
       type: FrameType.handshakeInit,
@@ -235,6 +238,8 @@ class PacketFrame {
     required String token,
     required bool accepted,
     String? reason,
+    bool usesPreSharedKey = false,
+    String? proof,
   }) {
     final payload = jsonEncode({
       'peerId': peerId,
@@ -242,9 +247,20 @@ class PacketFrame {
       'token': token,
       'accepted': accepted,
       'reason': reason,
+      'authentication': usesPreSharedKey ? 'preSharedKey' : 'default',
+      'proof': proof,
     });
     return PacketFrame(
       type: FrameType.handshakeAck,
+      body: Uint8List.fromList(utf8.encode(payload)),
+    );
+  }
+
+  /// Creates final mutual-authentication proof for pre-shared-key sessions.
+  factory PacketFrame.handshakeConfirm({required String proof}) {
+    final payload = jsonEncode({'proof': proof});
+    return PacketFrame(
+      type: FrameType.handshakeConfirm,
       body: Uint8List.fromList(utf8.encode(payload)),
     );
   }

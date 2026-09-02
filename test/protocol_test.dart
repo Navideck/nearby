@@ -27,6 +27,35 @@ void main() {
       expect(json['token'], equals('token_abc'));
       expect(json['metadata']['version'], equals('2.0'));
       expect(json['metadata']['role'], equals('host'));
+      expect(json['authentication'], equals('default'));
+    });
+
+    test('Pre-shared-key handshake frames carry proofs, not secrets', () {
+      final init = PacketFrame.handshakeInit(
+        peerId: 'peer_123',
+        displayName: 'Alice',
+        token: 'public_key',
+        usesPreSharedKey: true,
+      );
+      final initJson =
+          jsonDecode(utf8.decode(init.body)) as Map<String, dynamic>;
+      expect(initJson['authentication'], 'preSharedKey');
+      expect(initJson.toString(), isNot(contains('shared secret')));
+
+      final ack = PacketFrame.handshakeAck(
+        peerId: 'peer_456',
+        displayName: 'Bob',
+        token: 'public_key',
+        accepted: true,
+        usesPreSharedKey: true,
+        proof: 'proof_value',
+      );
+      final ackJson = jsonDecode(utf8.decode(ack.body)) as Map<String, dynamic>;
+      expect(ackJson['authentication'], 'preSharedKey');
+      expect(ackJson['proof'], 'proof_value');
+
+      final confirm = PacketFrame.handshakeConfirm(proof: 'confirm_value');
+      expect(confirm.type, FrameType.handshakeConfirm);
     });
 
     test('HandshakeAck frame with accepted=true', () {

@@ -19,6 +19,7 @@ class NearbySession {
   final String localDisplayName;
   final PayloadManager payloadManager;
   final Directory? storageDirectory;
+  final String? preSharedKey;
 
   final SecurityKeyPair _keyPair = SecurityManager.generateKeyPair();
   String get _localToken => _keyPair.publicKeyHex;
@@ -28,6 +29,7 @@ class NearbySession {
   DateTime _lastTxTime = DateTime.fromMillisecondsSinceEpoch(0);
   Map<String, String> _handshakeMetadata = const {};
   Uint8List? _sessionKey;
+  bool _remoteUsesPreSharedKey = false;
 
   PeerConnectionState _state = PeerConnectionState.connecting;
   final Completer<bool> _handshakeCompleter = Completer<bool>();
@@ -43,13 +45,16 @@ class NearbySession {
     required this.localDisplayName,
     required this.payloadManager,
     this.storageDirectory,
-  }) {
+    this.preSharedKey,
+  }) : assert(preSharedKey == null || preSharedKey != '') {
     _init();
   }
 
   PeerConnectionState get state => _state;
   String? get sasPin => _sasPin;
   Uint8List? get sessionKey => _sessionKey;
+  bool get usesPreSharedKey => preSharedKey != null;
+  bool get authenticationMatches => _remoteUsesPreSharedKey == usesPreSharedKey;
   Stream<PeerConnectionState> get stateStream => _stateController.stream;
 
   void _setState(PeerConnectionState newState) {
@@ -93,6 +98,7 @@ class NearbySession {
         displayName: localDisplayName,
         token: _localToken,
         metadata: _handshakeMetadata,
+        usesPreSharedKey: usesPreSharedKey,
       ),
     );
 
@@ -109,6 +115,21 @@ class NearbySession {
     required bool accept,
     String? reason,
   }) async {
+    if (accept && !authenticationMatches) {
+      accept = false;
+      reason = 'Connection authentication mode mismatch';
+    }
+
+    final canAuthenticate = _sharedSecret != null && _remoteToken != null;
+    if (accept && !canAuthenticate) {
+      accept = false;
+      reason = 'Authentication failed: invalid handshake key exchange';
+    }
+
+    final transcript = accept ? _transcriptDigest() : null;
+    final proof = accept && usesPreSharedKey
+        ? _createPreSharedKeyProof(transcript!, initiator: false)
+        : null;
     await transport.sendFrame(
       PacketFrame.handshakeAck(
         peerId: localPeerId,
@@ -116,30 +137,14 @@ class NearbySession {
         token: _localToken,
         accepted: accept,
         reason: reason,
+        usesPreSharedKey: usesPreSharedKey,
+        proof: proof,
       ),
     );
 
     if (accept) {
-      if (_sharedSecret != null && _remoteToken != null) {
-        final transcript = SecurityManager.computeTranscriptDigest(
-          localPeerId: localPeerId,
-          localToken: _localToken,
-          remotePeerId: peer.id,
-          remoteToken: _remoteToken!,
-          sharedSecretHex: _sharedSecret,
-          metadata: _handshakeMetadata,
-        );
-        _sessionKey = SecurityManager.deriveSessionKey(
-          sharedSecretHex: _sharedSecret!,
-          transcriptDigest: transcript,
-        );
-        transport.sessionKey = _sessionKey;
-      }
-      _setState(PeerConnectionState.connected);
-      _startHeartbeat();
-      if (!_handshakeCompleter.isCompleted) {
-        _handshakeCompleter.complete(true);
-      }
+      _sessionKey = _deriveSessionKey(transcript!);
+      if (!usesPreSharedKey) _markConnected();
     } else {
       disconnect(reason: reason ?? 'Connection rejected');
       if (!_handshakeCompleter.isCompleted) {
@@ -164,6 +169,7 @@ class NearbySession {
             ) ??
             {};
         _handshakeMetadata = Map<String, String>.unmodifiable(metadata);
+        _remoteUsesPreSharedKey = json['authentication'] == 'preSharedKey';
         peer = peer.copyWith(id: remotePeerId, displayName: remoteDisplayName);
 
         if (_remoteToken != null) {
@@ -188,6 +194,7 @@ class NearbySession {
             jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
         final bool accepted = json['accepted'] == true;
         _remoteToken = json['token'] as String?;
+        _remoteUsesPreSharedKey = json['authentication'] == 'preSharedKey';
 
         if (accepted && _remoteToken != null) {
           final String remotePeerId = json['peerId'] as String? ?? peer.id;
@@ -215,24 +222,38 @@ class NearbySession {
             sharedSecretHex: _sharedSecret,
             metadata: _handshakeMetadata,
           );
-          final transcript = SecurityManager.computeTranscriptDigest(
-            localPeerId: localPeerId,
-            localToken: _localToken,
-            remotePeerId: remotePeerId,
-            remoteToken: _remoteToken!,
-            sharedSecretHex: _sharedSecret,
-            metadata: _handshakeMetadata,
-          );
-          _sessionKey = SecurityManager.deriveSessionKey(
-            sharedSecretHex: _sharedSecret!,
-            transcriptDigest: transcript,
-          );
-          transport.sessionKey = _sessionKey;
-          _setState(PeerConnectionState.connected);
-          _startHeartbeat();
-          if (!_handshakeCompleter.isCompleted) {
-            _handshakeCompleter.complete(true);
+          if (!authenticationMatches) {
+            await disconnect(
+              reason: 'Connection authentication mode mismatch',
+              notifyRemote: false,
+            );
+            break;
           }
+
+          final transcript = _transcriptDigest();
+          if (usesPreSharedKey) {
+            final proof = json['proof'] as String? ?? '';
+            if (!_verifyPreSharedKeyProof(
+              transcript,
+              initiator: false,
+              proof: proof,
+            )) {
+              await disconnect(
+                reason: 'Pre-shared key authentication failed',
+                notifyRemote: false,
+              );
+              break;
+            }
+            _sessionKey = _deriveSessionKey(transcript);
+            await transport.sendFrame(
+              PacketFrame.handshakeConfirm(
+                proof: _createPreSharedKeyProof(transcript, initiator: true),
+              ),
+            );
+          } else {
+            _sessionKey = _deriveSessionKey(transcript);
+          }
+          _markConnected();
         } else {
           final reason = json['reason'] as String? ?? 'Rejected by peer';
           disconnect(reason: reason);
@@ -240,6 +261,34 @@ class NearbySession {
             _handshakeCompleter.complete(false);
           }
         }
+        break;
+
+      case FrameType.handshakeConfirm:
+        if (!usesPreSharedKey ||
+            _state != PeerConnectionState.authenticating ||
+            _sessionKey == null) {
+          await disconnect(
+            reason: 'Unexpected pre-shared key confirmation',
+            notifyRemote: false,
+          );
+          break;
+        }
+        final json =
+            jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+        final proof = json['proof'] as String? ?? '';
+        final transcript = _transcriptDigest();
+        if (!_verifyPreSharedKeyProof(
+          transcript,
+          initiator: true,
+          proof: proof,
+        )) {
+          await disconnect(
+            reason: 'Pre-shared key authentication failed',
+            notifyRemote: false,
+          );
+          break;
+        }
+        _markConnected();
         break;
 
       case FrameType.handshakeReject:
@@ -287,6 +336,53 @@ class NearbySession {
           transport: transport,
         );
         break;
+    }
+  }
+
+  String _transcriptDigest() => SecurityManager.computeTranscriptDigest(
+    localPeerId: localPeerId,
+    localToken: _localToken,
+    remotePeerId: peer.id,
+    remoteToken: _remoteToken!,
+    sharedSecretHex: _sharedSecret,
+    metadata: _handshakeMetadata,
+  );
+
+  Uint8List _deriveSessionKey(String transcript) =>
+      SecurityManager.deriveSessionKey(
+        sharedSecretHex: _sharedSecret!,
+        transcriptDigest: transcript,
+        preSharedKey: preSharedKey,
+      );
+
+  String _createPreSharedKeyProof(
+    String transcript, {
+    required bool initiator,
+  }) => SecurityManager.createPreSharedKeyProof(
+    sharedSecretHex: _sharedSecret!,
+    transcriptDigest: transcript,
+    preSharedKey: preSharedKey!,
+    initiator: initiator,
+  );
+
+  bool _verifyPreSharedKeyProof(
+    String transcript, {
+    required bool initiator,
+    required String proof,
+  }) => SecurityManager.verifyPreSharedKeyProof(
+    sharedSecretHex: _sharedSecret!,
+    transcriptDigest: transcript,
+    preSharedKey: preSharedKey!,
+    initiator: initiator,
+    proof: proof,
+  );
+
+  void _markConnected() {
+    transport.sessionKey = _sessionKey;
+    _setState(PeerConnectionState.connected);
+    _startHeartbeat();
+    if (!_handshakeCompleter.isCompleted) {
+      _handshakeCompleter.complete(true);
     }
   }
 

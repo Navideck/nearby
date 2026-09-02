@@ -154,7 +154,18 @@ void main() {
       const options = AdvertisingOptions(serviceId: 'test-app');
       expect(options.strategy, equals(DiscoveryStrategy.hybrid));
       expect(options.securityMode, equals(SecurityMode.autoAccept));
+      expect(options.preSharedKey, isNull);
       expect(options.metadata, isEmpty);
+    });
+
+    test('AdvertisingOptions accepts pre-shared-key security', () {
+      const options = AdvertisingOptions(
+        serviceId: 'test-app',
+        securityMode: SecurityMode.preSharedKey,
+        preSharedKey: 'shared secret',
+      );
+      expect(options.securityMode, SecurityMode.preSharedKey);
+      expect(options.preSharedKey, 'shared secret');
     });
 
     test('DiscoveryOptions configuration', () {

@@ -44,7 +44,7 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 - **Multiplatform**: iOS, macOS, Android, Windows, Linux.
 - **Hybrid Transports**: Seamlessly multiplexes Wi-Fi/LAN and Bluetooth Low Energy.
 - **Multiplexed BLE Scanning**: Centralized BLE scan dispatcher prevents callback collisions when discovery and broadcast channels run concurrently.
-- **Encrypted sessions**: Ephemeral Diffie-Hellman keys, AES-256-GCM frame encryption, HMAC authentication, and optional SAS PIN verification.
+- **Encrypted sessions**: Ephemeral Diffie-Hellman keys, AES-256-GCM frame encryption, HMAC authentication, optional SAS PIN verification, and mutual pre-shared-key authentication.
 - **Chunked Payload Engine**: Reliable chunking, interleaving, and CRC32 verification for byte messages, files, and live streams.
 - **Connectionless Broadcast Channels**: Ultra-low latency UDP multicast and BLE manufacturer advertising for 1:Many real-time broadcasting.
 
@@ -125,10 +125,11 @@ final nearby = NearbyService(
 #### A. Start Advertising Presence
 ```dart
 await nearby.startAdvertising(
-  options: const AdvertisingOptions(
+  options: AdvertisingOptions(
     serviceId: 'production-set',
     strategy: DiscoveryStrategy.hybrid,
-    securityMode: SecurityMode.pinVerification, // or SecurityMode.autoAccept
+    securityMode: SecurityMode.preSharedKey,
+    preSharedKey: configuredSecret,
   ),
 );
 ```
@@ -150,8 +151,17 @@ await nearby.startDiscovery(
 );
 
 // Connect to a peer (TCP first, BLE fallback)
-final connected = await nearby.requestConnection(peer);
+final connected = await nearby.requestConnection(
+  peer,
+  preSharedKey: configuredSecret,
+);
 ```
+
+`SecurityMode.preSharedKey` mutually authenticates both peers and mixes the
+secret into the encrypted session key without sending it. Use
+`SecurityMode.pinVerification` instead when users should compare a per-session
+SAS PIN, or `SecurityMode.autoAccept` for encrypted but unauthenticated peers.
+Connected protocol version 3 does not accept older session frames.
 
 #### C. Handle Inbound Connection & PIN Verification
 ```dart

@@ -183,6 +183,74 @@ void main() {
       expect(sessionB.state, equals(PeerConnectionState.disconnected));
     });
 
+    test('Matching pre-shared keys mutually authenticate the session', () async {
+      await sessionA.dispose();
+      await sessionB.dispose();
+      transportA = MockSessionTransport(peerId: peerB.id);
+      transportB = MockSessionTransport(peerId: peerA.id);
+      transportA.paired = transportB;
+      transportB.paired = transportA;
+      sessionA = NearbySession(
+        peer: peerB,
+        transport: transportA,
+        localPeerId: peerA.id,
+        localDisplayName: peerA.displayName,
+        payloadManager: payloadManagerA,
+        preSharedKey: 'correct horse battery staple',
+      );
+      sessionB = NearbySession(
+        peer: peerA,
+        transport: transportB,
+        localPeerId: peerB.id,
+        localDisplayName: peerB.displayName,
+        payloadManager: payloadManagerB,
+        preSharedKey: 'correct horse battery staple',
+      );
+
+      final handshake = sessionA.initiateHandshake();
+      await Future.delayed(const Duration(milliseconds: 30));
+      await sessionB.respondToHandshake(accept: true);
+
+      expect(await handshake, isTrue);
+      await Future.delayed(const Duration(milliseconds: 30));
+      expect(sessionA.state, PeerConnectionState.connected);
+      expect(sessionB.state, PeerConnectionState.connected);
+      expect(sessionA.sessionKey, sessionB.sessionKey);
+    });
+
+    test('Mismatched pre-shared keys reject the session', () async {
+      await sessionA.dispose();
+      await sessionB.dispose();
+      transportA = MockSessionTransport(peerId: peerB.id);
+      transportB = MockSessionTransport(peerId: peerA.id);
+      transportA.paired = transportB;
+      transportB.paired = transportA;
+      sessionA = NearbySession(
+        peer: peerB,
+        transport: transportA,
+        localPeerId: peerA.id,
+        localDisplayName: peerA.displayName,
+        payloadManager: payloadManagerA,
+        preSharedKey: 'wrong key',
+      );
+      sessionB = NearbySession(
+        peer: peerA,
+        transport: transportB,
+        localPeerId: peerB.id,
+        localDisplayName: peerB.displayName,
+        payloadManager: payloadManagerB,
+        preSharedKey: 'right key',
+      );
+
+      final handshake = sessionA.initiateHandshake();
+      await Future.delayed(const Duration(milliseconds: 30));
+      await sessionB.respondToHandshake(accept: true);
+
+      expect(await handshake, isFalse);
+      expect(sessionA.state, PeerConnectionState.disconnected);
+      expect(sessionB.state, isNot(PeerConnectionState.connected));
+    });
+
     test(
       'Transfers bidirectional byte payload across connected sessions',
       () async {

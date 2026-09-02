@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:pointycastle/export.dart';
 
-/// Ephemeral key pair for Diffie-Hellman authenticated key exchange.
+/// Ephemeral key pair for Diffie-Hellman key exchange.
 class SecurityKeyPair {
   final BigInt privateKey;
   final String publicKeyHex;
@@ -136,12 +136,20 @@ class SecurityManager {
   static Uint8List deriveSessionKey({
     required String sharedSecretHex,
     required String transcriptDigest,
+    String? preSharedKey,
     String contextInfo = 'navideck-nearby-session-key',
   }) {
     if (sharedSecretHex.isEmpty) {
       throw ArgumentError('sharedSecretHex must not be empty');
     }
-    final ikm = utf8.encode(sharedSecretHex);
+    final sharedSecret = utf8.encode(sharedSecretHex);
+    final ikm = preSharedKey == null
+        ? sharedSecret
+        : <int>[
+            ...sharedSecret,
+            0,
+            ...sha256.convert(utf8.encode(preSharedKey)).bytes,
+          ];
     final salt = utf8.encode(transcriptDigest);
     final info = utf8.encode(contextInfo);
 
@@ -154,6 +162,52 @@ class SecurityManager {
     final okm = hmacExpand.convert([...info, 0x01]).bytes;
 
     return Uint8List.fromList(okm);
+  }
+
+  /// Creates a role-bound proof that both peers know [preSharedKey] and the
+  /// ephemeral Diffie-Hellman secret. The shared key is never transmitted.
+  static String createPreSharedKeyProof({
+    required String sharedSecretHex,
+    required String transcriptDigest,
+    required String preSharedKey,
+    required bool initiator,
+  }) {
+    if (preSharedKey.isEmpty) {
+      throw ArgumentError('preSharedKey must not be empty');
+    }
+    final proofKey = deriveSessionKey(
+      sharedSecretHex: sharedSecretHex,
+      transcriptDigest: transcriptDigest,
+      preSharedKey: preSharedKey,
+      contextInfo: 'navideck-nearby-pre-shared-key-proof',
+    );
+    final role = initiator ? 'initiator' : 'responder';
+    return computeHmac(
+      proofKey,
+      utf8.encode('$role:$transcriptDigest'),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  /// Verifies a pre-shared-key proof in constant time.
+  static bool verifyPreSharedKeyProof({
+    required String sharedSecretHex,
+    required String transcriptDigest,
+    required String preSharedKey,
+    required bool initiator,
+    required String proof,
+  }) {
+    final expected = createPreSharedKeyProof(
+      sharedSecretHex: sharedSecretHex,
+      transcriptDigest: transcriptDigest,
+      preSharedKey: preSharedKey,
+      initiator: initiator,
+    );
+    if (expected.length != proof.length) return false;
+    var difference = 0;
+    for (var index = 0; index < expected.length; index++) {
+      difference |= expected.codeUnitAt(index) ^ proof.codeUnitAt(index);
+    }
+    return difference == 0;
   }
 
   static Uint8List _deriveEncryptionKey(Uint8List sessionKey) {

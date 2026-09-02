@@ -8,6 +8,9 @@ enum SecurityMode {
 
   /// Automatic handshake acceptance without manual PIN comparison.
   autoAccept,
+
+  /// Automatic mutual authentication using a shared secret.
+  preSharedKey,
 }
 
 /// Configuration options for advertising this device to nearby peers.
@@ -30,6 +33,11 @@ class AdvertisingOptions {
   /// Security / authentication mode.
   final SecurityMode securityMode;
 
+  /// Shared secret required when [securityMode] is [SecurityMode.preSharedKey].
+  ///
+  /// The secret is never sent over the transport.
+  final String? preSharedKey;
+
   const AdvertisingOptions({
     required this.serviceId,
     this.metadata = const {},
@@ -37,7 +45,12 @@ class AdvertisingOptions {
     this.port,
     this.fallbackToDynamicPort = true,
     this.securityMode = SecurityMode.autoAccept,
-  });
+    this.preSharedKey,
+  }) : assert(
+         securityMode != SecurityMode.preSharedKey ||
+             (preSharedKey != null && preSharedKey != ''),
+         'preSharedKey must not be empty when using preSharedKey security',
+       );
 }
 
 /// Configuration options for discovering nearby advertising peers.

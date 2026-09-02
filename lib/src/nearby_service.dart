@@ -169,6 +169,12 @@ class NearbyService {
 
   /// Starts advertising this device to nearby peers.
   Future<void> startAdvertising({required AdvertisingOptions options}) async {
+    if (options.securityMode == SecurityMode.preSharedKey &&
+        (options.preSharedKey == null || options.preSharedKey!.isEmpty)) {
+      throw ArgumentError(
+        'preSharedKey must not be empty when using preSharedKey security',
+      );
+    }
     await stopAdvertising();
     _currentAdvertisingOptions = options;
 
@@ -255,8 +261,12 @@ class NearbyService {
   Future<bool> requestConnection(
     Peer peer, {
     Map<String, String> metadata = const {},
+    String? preSharedKey,
     Duration timeout = const Duration(seconds: 30),
   }) async {
+    if (preSharedKey != null && preSharedKey.isEmpty) {
+      throw ArgumentError('preSharedKey must not be empty');
+    }
     NearbyTransport transport;
 
     final String? bleServiceUuid =
@@ -312,6 +322,7 @@ class NearbyService {
       localDisplayName: localDisplayName,
       payloadManager: _payloadManager,
       storageDirectory: storageDirectory,
+      preSharedKey: preSharedKey,
     );
 
     _activeSessions[peer.id] = session;
@@ -463,6 +474,11 @@ class NearbyService {
               localDisplayName: localDisplayName,
               payloadManager: _payloadManager,
               storageDirectory: storageDirectory,
+              preSharedKey:
+                  _currentAdvertisingOptions?.securityMode ==
+                      SecurityMode.preSharedKey
+                  ? _currentAdvertisingOptions?.preSharedKey
+                  : null,
             );
 
             _activeSessions[peer.id] = session;
@@ -483,6 +499,16 @@ class NearbyService {
             // Feed HandshakeInit frame into session
             await session.handleFrame(frame);
 
+            if (!session.authenticationMatches) {
+              await session.respondToHandshake(
+                accept: false,
+                reason: 'Connection authentication mode mismatch',
+              );
+              await transport.close();
+              onCleanup?.call();
+              return;
+            }
+
             if (session.sasPin == null) {
               // Key exchange failed or invalid token: reject handshake
               await session.respondToHandshake(
@@ -502,8 +528,8 @@ class NearbyService {
             );
 
             // Auto-accept if configured
-            if (_currentAdvertisingOptions?.securityMode ==
-                SecurityMode.autoAccept) {
+            if (_currentAdvertisingOptions?.securityMode !=
+                SecurityMode.pinVerification) {
               await session.respondToHandshake(accept: true);
             } else {
               _connectionRequestController.add(request);
