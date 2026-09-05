@@ -35,7 +35,7 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 | **Device Scale** | Bound by platform TCP/GATT limits (~3–7 BLE) | **Unlimited listeners** simultaneously |
 | **Transports** | TCP sockets & BLE GATT characteristics | UDP Multicast datagrams & BLE Advertisements |
 | **Data Types** | Byte packets, large disk files, continuous streams | Opaque datagrams with channel and sender framing |
-| **Best For** | File sharing, remote control, chat, audio streaming | Timecode sync, mesh beacons, tally lights, presence |
+| **Best For** | File sharing, remote control, chat, audio streaming | Mesh beacons, presence |
 
 ---
 
