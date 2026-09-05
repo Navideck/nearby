@@ -178,32 +178,47 @@ class BroadcastChannel {
     }
   }
 
-  Future<void> _sendBle(Uint8List bytes) async {
-    try {
-      final name = _wire.localName(bytes);
-      final readiness = await UniversalBlePeripheral.getAvailabilityState();
-      if (!_isBroadcasting) return;
-      if (readiness == PeripheralReadinessState.bluetoothOff ||
-          readiness == PeripheralReadinessState.unknown) {
+  bool _canAdvertise(PeripheralReadinessState readiness) {
+    switch (readiness) {
+      case PeripheralReadinessState.ready:
+        _bleUnavailable = false;
+        _bluetoothEnablePrompted = false;
+        return true;
+      case PeripheralReadinessState.bluetoothOff:
         _bleAdvertising = false;
-        if (readiness == PeripheralReadinessState.bluetoothOff) {
-          _promptEnableBluetoothIfNeeded();
-        }
-        return;
-      }
-      if (readiness == PeripheralReadinessState.unauthorized) {
+        _promptEnableBluetoothIfNeeded();
+        return false;
+      case PeripheralReadinessState.unknown:
+        _bleAdvertising = false;
+        return false;
+      case PeripheralReadinessState.unauthorized:
         throw StateError('BLE advertising $readiness');
-      }
-      if (readiness == PeripheralReadinessState.unsupported) {
+      case PeripheralReadinessState.unsupported:
         if (defaultTargetPlatform != TargetPlatform.android) {
           _bleUnavailable = true;
           throw StateError('BLE advertising $readiness');
         }
-        if (_bluetoothEnablePrompted) return;
-      } else {
-        _bleUnavailable = false;
-        _bluetoothEnablePrompted = false;
-      }
+        return !_bluetoothEnablePrompted;
+    }
+  }
+
+  void _handleBleSendError(Object error) {
+    final message = error.toString();
+    if ((error is StateError && error.message.contains('unsupported')) ||
+        message.contains('not supported')) {
+      _bleUnavailable = true;
+    } else if (message.contains('Bluetooth is not enabled') ||
+        message.contains('bluetoothOff')) {
+      _bleAdvertising = false;
+      _promptEnableBluetoothIfNeeded();
+    }
+    _fail(DiscoveryMedium.ble, error);
+  }
+
+  Future<void> _sendBle(Uint8List bytes) async {
+    try {
+      final readiness = await UniversalBlePeripheral.getAvailabilityState();
+      if (!_isBroadcasting || !_canAdvertise(readiness)) return;
       if (_bleAdvertising) await UniversalBlePeripheral.stopAdvertising();
       _bleAdvertising = false;
       if (!_isBroadcasting) return;
@@ -212,7 +227,7 @@ class BroadcastChannel {
           defaultTargetPlatform == TargetPlatform.macOS;
       await UniversalBlePeripheral.startAdvertising(
         services: const [],
-        localName: apple ? name : null,
+        localName: apple ? _wire.localName(bytes) : null,
         manufacturerData: apple
             ? null
             : ManufacturerData(config.bleCompanyId, bytes),
@@ -224,16 +239,7 @@ class BroadcastChannel {
       );
       _bleAdvertising = true;
     } catch (e) {
-      if (e is StateError && e.message.contains('unsupported')) {
-        _bleUnavailable = true;
-      } else if (e.toString().contains('not supported')) {
-        _bleUnavailable = true;
-      } else if (e.toString().contains('Bluetooth is not enabled') ||
-          e.toString().contains('bluetoothOff')) {
-        _bleAdvertising = false;
-        _promptEnableBluetoothIfNeeded();
-      }
-      _fail(DiscoveryMedium.ble, e);
+      _handleBleSendError(e);
     }
   }
 
