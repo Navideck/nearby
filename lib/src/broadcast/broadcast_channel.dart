@@ -55,6 +55,7 @@ class BroadcastChannel {
   final _errors = StreamController<BroadcastFailure>.broadcast();
   bool _isBroadcasting = false, _isListening = false, _disposed = false;
   bool _bleScanning = false, _bleAdvertising = false, _bleUnavailable = false;
+  bool _bluetoothEnablePrompted = false;
   Future<void>? _startingBroadcast, _startingListen, _bleSending;
   StreamSubscription<BlePeripheralAdvertisingStateChanged>? _advertisingState;
 
@@ -84,6 +85,7 @@ class BroadcastChannel {
     if (_isBroadcasting) return _startingBroadcast;
     _isBroadcasting = true;
     _bleUnavailable = false;
+    _bluetoothEnablePrompted = false;
     _startingBroadcast = _startBroadcasting();
     await _startingBroadcast;
   }
@@ -176,6 +178,12 @@ class BroadcastChannel {
       if (readiness == PeripheralReadinessState.bluetoothOff ||
           readiness == PeripheralReadinessState.unknown) {
         _bleAdvertising = false;
+        if (readiness == PeripheralReadinessState.bluetoothOff &&
+            defaultTargetPlatform == TargetPlatform.android &&
+            !_bluetoothEnablePrompted) {
+          _bluetoothEnablePrompted = true;
+          UniversalBle.enableBluetooth().catchError((_) => false);
+        }
         return;
       }
       if (readiness == PeripheralReadinessState.unauthorized) {
@@ -186,8 +194,10 @@ class BroadcastChannel {
           _bleUnavailable = true;
           throw StateError('BLE advertising $readiness');
         }
+        if (_bluetoothEnablePrompted) return;
       } else {
         _bleUnavailable = false;
+        _bluetoothEnablePrompted = false;
       }
       if (_bleAdvertising) await UniversalBlePeripheral.stopAdvertising();
       _bleAdvertising = false;
@@ -213,6 +223,10 @@ class BroadcastChannel {
         _bleUnavailable = true;
       } else if (e.toString().contains('not supported')) {
         _bleUnavailable = true;
+      } else if (e.toString().contains('Bluetooth is not enabled') ||
+          e.toString().contains('bluetoothOff')) {
+        _bleAdvertising = false;
+        _bluetoothEnablePrompted = true;
       }
       _fail(DiscoveryMedium.ble, e);
     }
@@ -220,6 +234,7 @@ class BroadcastChannel {
 
   Future<void> stopBroadcasting() async {
     _isBroadcasting = false;
+    _bluetoothEnablePrompted = false;
     await _startingBroadcast;
     await _bleSending;
     await _network.stopSending();

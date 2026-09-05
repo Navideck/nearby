@@ -6,7 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 class FakeCentral extends Fake implements UniversalBlePlatform {
   final packets = StreamController<BleDevice>.broadcast(sync: true);
   bool scanning = false, failScan = false;
-  int starts = 0, stops = 0;
+  int starts = 0, stops = 0, enableBluetoothCalls = 0;
   OnScanResult? callback;
   @override
   Stream<BleDevice> get scanStream => packets.stream;
@@ -28,6 +28,12 @@ class FakeCentral extends Fake implements UniversalBlePlatform {
   Future<void> stopScan() async {
     stops++;
     scanning = false;
+  }
+
+  @override
+  Future<bool> enableBluetooth() async {
+    enableBluetoothCalls++;
+    return true;
   }
 }
 
