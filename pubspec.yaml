@@ -1,5 +1,5 @@
 name: nearby
-description: "A new Flutter plugin project."
+description: "Nearby peer sessions and connectionless UDP/BLE broadcasting for Flutter."
 version: 0.0.1
 homepage:
 
@@ -12,13 +12,21 @@ dependencies:
     sdk: flutter
   plugin_platform_interface: ^2.0.2
   bonsoir: ^7.1.5
-  universal_ble: ^2.1.1
+  universal_ble: ^2.2.0
   crypto: ^3.0.3
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.navideck.nearby
+        pluginClass: NearbyPlugin
 
 platforms:
   android:

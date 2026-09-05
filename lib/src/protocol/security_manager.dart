@@ -1,21 +1,21 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:crypto/crypto.dart';
 
-/// Ephemeral key pair for Diffie-Hellman authenticated key exchange.
+import 'package:crypto/crypto.dart';
+import 'package:pointycastle/export.dart';
+
+/// Ephemeral key pair for Diffie-Hellman key exchange.
 class SecurityKeyPair {
   final BigInt privateKey;
   final String publicKeyHex;
 
-  const SecurityKeyPair({
-    required this.privateKey,
-    required this.publicKeyHex,
-  });
+  const SecurityKeyPair({required this.privateKey, required this.publicKeyHex});
 }
 
 /// Manages ephemeral key exchange, authenticated transcript calculation, and Short Authentication String (SAS) calculation.
 class SecurityManager {
+  static const int encryptedFrameNonceLength = 12;
   static final Random _secureRandom = Random.secure();
 
   // RFC 3526 2048-bit MODP Group 14 Prime
@@ -44,7 +44,10 @@ class SecurityManager {
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     final priv = BigInt.parse(hex, radix: 16);
     final pub = dhGenerator.modPow(priv, dhPrime);
-    return SecurityKeyPair(privateKey: priv, publicKeyHex: pub.toRadixString(16));
+    return SecurityKeyPair(
+      privateKey: priv,
+      publicKeyHex: pub.toRadixString(16),
+    );
   }
 
   /// Generates a cryptographically secure random token or public key string.
@@ -102,7 +105,9 @@ class SecurityManager {
     int pinDigits = 4,
   }) {
     if (pinDigits != 4 && pinDigits != 6) {
-      throw ArgumentError('pinDigits must be either 4 or 6, but was $pinDigits');
+      throw ArgumentError(
+        'pinDigits must be either 4 or 6, but was $pinDigits',
+      );
     }
 
     final String transcriptDigest = computeTranscriptDigest(
@@ -114,8 +119,9 @@ class SecurityManager {
       metadata: metadata,
     );
 
-    final Uint8List bytes =
-        Uint8List.fromList(sha256.convert(utf8.encode(transcriptDigest)).bytes);
+    final Uint8List bytes = Uint8List.fromList(
+      sha256.convert(utf8.encode(transcriptDigest)).bytes,
+    );
 
     // Extract a 32-bit unsigned integer from the first 4 bytes of hash
     final ByteData byteData = ByteData.sublistView(bytes);
@@ -130,12 +136,20 @@ class SecurityManager {
   static Uint8List deriveSessionKey({
     required String sharedSecretHex,
     required String transcriptDigest,
+    String? preSharedKey,
     String contextInfo = 'navideck-nearby-session-key',
   }) {
     if (sharedSecretHex.isEmpty) {
       throw ArgumentError('sharedSecretHex must not be empty');
     }
-    final ikm = utf8.encode(sharedSecretHex);
+    final sharedSecret = utf8.encode(sharedSecretHex);
+    final ikm = preSharedKey == null
+        ? sharedSecret
+        : <int>[
+            ...sharedSecret,
+            0,
+            ...sha256.convert(utf8.encode(preSharedKey)).bytes,
+          ];
     final salt = utf8.encode(transcriptDigest);
     final info = utf8.encode(contextInfo);
 
@@ -148,6 +162,105 @@ class SecurityManager {
     final okm = hmacExpand.convert([...info, 0x01]).bytes;
 
     return Uint8List.fromList(okm);
+  }
+
+  /// Creates a role-bound proof that both peers know [preSharedKey] and the
+  /// ephemeral Diffie-Hellman secret. The shared key is never transmitted.
+  static String createPreSharedKeyProof({
+    required String sharedSecretHex,
+    required String transcriptDigest,
+    required String preSharedKey,
+    required bool initiator,
+  }) {
+    if (preSharedKey.isEmpty) {
+      throw ArgumentError('preSharedKey must not be empty');
+    }
+    final proofKey = deriveSessionKey(
+      sharedSecretHex: sharedSecretHex,
+      transcriptDigest: transcriptDigest,
+      preSharedKey: preSharedKey,
+      contextInfo: 'navideck-nearby-pre-shared-key-proof',
+    );
+    final role = initiator ? 'initiator' : 'responder';
+    return computeHmac(
+      proofKey,
+      utf8.encode('$role:$transcriptDigest'),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  /// Verifies a pre-shared-key proof in constant time.
+  static bool verifyPreSharedKeyProof({
+    required String sharedSecretHex,
+    required String transcriptDigest,
+    required String preSharedKey,
+    required bool initiator,
+    required String proof,
+  }) {
+    final expected = createPreSharedKeyProof(
+      sharedSecretHex: sharedSecretHex,
+      transcriptDigest: transcriptDigest,
+      preSharedKey: preSharedKey,
+      initiator: initiator,
+    );
+    if (expected.length != proof.length) return false;
+    var difference = 0;
+    for (var index = 0; index < expected.length; index++) {
+      difference |= expected.codeUnitAt(index) ^ proof.codeUnitAt(index);
+    }
+    return difference == 0;
+  }
+
+  static Uint8List _deriveEncryptionKey(Uint8List sessionKey) {
+    return computeHmac(sessionKey, utf8.encode('nearby-frame-encryption'));
+  }
+
+  /// Encrypts a frame body with AES-256-GCM and prefixes its random nonce.
+  static Uint8List encryptFrameBody(Uint8List sessionKey, Uint8List body) {
+    final nonce = Uint8List.fromList(
+      List<int>.generate(
+        encryptedFrameNonceLength,
+        (_) => _secureRandom.nextInt(256),
+      ),
+    );
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(
+        true,
+        AEADParameters(
+          KeyParameter(_deriveEncryptionKey(sessionKey)),
+          128,
+          nonce,
+          Uint8List(0),
+        ),
+      );
+    final encrypted = cipher.process(body);
+    return Uint8List.fromList([...nonce, ...encrypted]);
+  }
+
+  /// Decrypts and authenticates a frame body produced by [encryptFrameBody].
+  static Uint8List decryptFrameBody(
+    Uint8List sessionKey,
+    Uint8List encryptedBody,
+  ) {
+    if (encryptedBody.length < encryptedFrameNonceLength + 16) {
+      throw const FormatException('Encrypted frame body is too short');
+    }
+    final nonce = encryptedBody.sublist(0, encryptedFrameNonceLength);
+    final ciphertext = encryptedBody.sublist(encryptedFrameNonceLength);
+    try {
+      final cipher = GCMBlockCipher(AESEngine())
+        ..init(
+          false,
+          AEADParameters(
+            KeyParameter(_deriveEncryptionKey(sessionKey)),
+            128,
+            nonce,
+            Uint8List(0),
+          ),
+        );
+      return cipher.process(ciphertext);
+    } on InvalidCipherTextException {
+      throw const FormatException('Encrypted frame authentication failed');
+    }
   }
 
   /// Computes an HMAC-SHA256 message authentication tag.

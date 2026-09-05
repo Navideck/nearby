@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'ble_constants.dart';
 
 /// Callback to perform a single chunk write attempt.
@@ -12,7 +13,10 @@ class BleChunkSender {
 
   /// Enqueues an asynchronous write operation sequentially.
   Future<T> synchronized<T>(Future<T> Function() operation) {
-    final next = _writeQueue.then((_) => operation(), onError: (_) => operation());
+    final next = _writeQueue.then(
+      (_) => operation(),
+      onError: (_) => operation(),
+    );
     _writeQueue = next.then((_) {}, onError: (_) {});
     return next;
   }
@@ -40,8 +44,9 @@ class BleChunkSender {
       while (offset < data.length) {
         if (isClosed()) break;
 
-        final int chunkSize =
-            (data.length - offset < maxChunk) ? (data.length - offset) : maxChunk;
+        final int chunkSize = (data.length - offset < maxChunk)
+            ? (data.length - offset)
+            : maxChunk;
         final Uint8List chunk = data.sublist(offset, offset + chunkSize);
 
         int attempts = 0;

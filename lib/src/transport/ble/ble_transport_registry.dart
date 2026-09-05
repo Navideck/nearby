@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
+
 import 'package:universal_ble/universal_ble.dart';
+
 import '../ble_transport.dart';
 
 /// Centralized registry and event dispatcher for active BLE transports.
@@ -25,34 +27,33 @@ class BleTransportRegistry {
     if (_callbacksInitialized) return;
     _callbacksInitialized = true;
 
-    UniversalBle.onValueChange = (
-      String deviceId,
-      String characteristicId,
-      Uint8List value,
-      dynamic _,
-    ) {
-      final key = normalizeDeviceId(deviceId);
-      final transport = _centralTransports[key] ??
-          (_centralTransports.length == 1 ? _centralTransports.values.first : null);
+    UniversalBle.onValueChange =
+        (String deviceId, String characteristicId, Uint8List value, dynamic _) {
+          final key = normalizeDeviceId(deviceId);
+          final transport =
+              _centralTransports[key] ??
+              (_centralTransports.length == 1
+                  ? _centralTransports.values.first
+                  : null);
 
-      if (transport != null && !transport.isClosed) {
-        if (BleUuidParser.compareStrings(characteristicId, kNearbyBleRxCharUuid)) {
-          transport.framer.addBytes(value);
-        }
-      }
-    };
+          if (transport != null && !transport.isClosed) {
+            if (BleUuidParser.compareStrings(
+              characteristicId,
+              kNearbyBleRxCharUuid,
+            )) {
+              transport.framer.addBytes(value);
+            }
+          }
+        };
 
-    UniversalBle.onConnectionChange = (
-      String deviceId,
-      bool isConnected,
-      String? error,
-    ) {
-      if (!isConnected) {
-        final key = normalizeDeviceId(deviceId);
-        final transport = _centralTransports.remove(key);
-        transport?.close();
-      }
-    };
+    UniversalBle.onConnectionChange =
+        (String deviceId, bool isConnected, String? error) {
+          if (!isConnected) {
+            final key = normalizeDeviceId(deviceId);
+            final transport = _centralTransports.remove(key);
+            transport?.close();
+          }
+        };
   }
 
   // --- Central Management ---
@@ -71,7 +72,10 @@ class BleTransportRegistry {
 
   // --- Peripheral Management ---
 
-  BlePeripheralTransport getOrCreatePeripheral(String deviceId, [String? peerId]) {
+  BlePeripheralTransport getOrCreatePeripheral(
+    String deviceId, [
+    String? peerId,
+  ]) {
     final key = normalizeDeviceId(deviceId);
     var transport = _peripheralTransports[key];
 

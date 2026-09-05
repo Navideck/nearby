@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+
+import 'broadcast/broadcast_channel.dart';
+import 'broadcast/broadcast_packet.dart';
 import 'discovery/ble_discovery.dart';
 import 'discovery/discovery_coordinator.dart';
 import 'models/connection_request.dart';
@@ -58,13 +61,15 @@ class NearbyService {
   int _pendingHandshakeCount = 0;
   AdvertisingOptions? _currentAdvertisingOptions;
   DiscoveryOptions? _currentDiscoveryOptions;
+  final List<BroadcastChannel> _broadcastChannels = [];
+  BroadcastChannel? _defaultBroadcastChannel;
 
   NearbyService({
     String? localPeerId,
     String? localDisplayName,
     this.storageDirectory,
-  })  : localPeerId = localPeerId ?? _generateRandomId(),
-        localDisplayName = localDisplayName ?? Platform.localHostname {
+  }) : localPeerId = localPeerId ?? _generateRandomId(),
+       localDisplayName = localDisplayName ?? Platform.localHostname {
     _discoveryCoordinator.localPeerId = this.localPeerId;
   }
 
@@ -74,10 +79,60 @@ class NearbyService {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
+  // --- Broadcast Channels (Connectionless 1:Many) ---
+
+  /// List of currently active broadcast channels created via [createBroadcastChannel].
+  List<BroadcastChannel> get activeBroadcastChannels =>
+      List.unmodifiable(_broadcastChannels);
+
+  /// Default broadcast channel for convenience broadcast operations.
+  BroadcastChannel get defaultBroadcastChannel =>
+      _defaultBroadcastChannel ??= createBroadcastChannel(
+        const BroadcastChannelConfig(
+          channelId: 'nearby-default',
+          strategy: DiscoveryStrategy.hybrid,
+        ),
+      );
+
+  /// Creates and registers a dedicated [BroadcastChannel] managed by this service.
+  BroadcastChannel createBroadcastChannel(BroadcastChannelConfig config) {
+    final channel = BroadcastChannel(
+      config: config,
+      senderId: localPeerId,
+      displayName: localDisplayName,
+    );
+    _broadcastChannels.add(channel);
+    return channel;
+  }
+
+  /// Broadcasts a raw datagram to all listeners on the default or specified channel.
+  Future<void> broadcast(
+    Uint8List data, {
+    String? channelId,
+    String? localName,
+  }) async {
+    final channel = channelId != null
+        ? _broadcastChannels.firstWhere(
+            (c) => c.config.channelId == channelId,
+            orElse: () => createBroadcastChannel(
+              BroadcastChannelConfig(channelId: channelId),
+            ),
+          )
+        : defaultBroadcastChannel;
+    await channel.send(data, localName: localName);
+  }
+
+  /// Stream of broadcast packets received on the default broadcast channel.
+  Stream<BroadcastPacket> get onBroadcastReceived =>
+      defaultBroadcastChannel.stream;
+
   // --- Status Getters ---
 
   bool get isAdvertising => _isAdvertising;
   bool get isDiscovering => _isDiscovering;
+
+  /// TCP port currently accepting connected sessions, if network advertising is active.
+  int? get advertisingPort => _tcpServer?.port;
 
   /// Current list of discovered peers.
   List<Peer> get discoveredPeers => _discoveryCoordinator.currentPeers;
@@ -113,19 +168,33 @@ class NearbyService {
   // --- Advertising & Discovery ---
 
   /// Starts advertising this device to nearby peers.
-  Future<void> startAdvertising({
-    required AdvertisingOptions options,
-  }) async {
+  Future<void> startAdvertising({required AdvertisingOptions options}) async {
+    if (options.securityMode == SecurityMode.preSharedKey &&
+        (options.preSharedKey == null || options.preSharedKey!.isEmpty)) {
+      throw ArgumentError(
+        'preSharedKey must not be empty when using preSharedKey security',
+      );
+    }
     await stopAdvertising();
     _currentAdvertisingOptions = options;
 
     try {
       // Start TCP server only for strategies requiring LAN socket communication
       if (options.strategy == DiscoveryStrategy.hybrid ||
-          options.strategy == DiscoveryStrategy.mdnsOnly) {
-        _tcpServer = await TcpServer.bind(port: options.port ?? 0);
-        _serverSubscription =
-            _tcpServer!.incomingConnections.listen(_handleIncomingSocket);
+          options.strategy == DiscoveryStrategy.networkOnly) {
+        try {
+          _tcpServer = await TcpServer.bind(port: options.port ?? 0);
+        } on SocketException {
+          if (!options.fallbackToDynamicPort ||
+              options.port == null ||
+              options.port == 0) {
+            rethrow;
+          }
+          _tcpServer = await TcpServer.bind();
+        }
+        _serverSubscription = _tcpServer!.incomingConnections.listen(
+          _handleIncomingSocket,
+        );
       }
 
       // Listen for incoming BLE peripheral connections
@@ -164,9 +233,7 @@ class NearbyService {
   }
 
   /// Starts discovering nearby advertising peers.
-  Future<void> startDiscovery({
-    required DiscoveryOptions options,
-  }) async {
+  Future<void> startDiscovery({required DiscoveryOptions options}) async {
     await stopDiscovery();
     _currentDiscoveryOptions = options;
     try {
@@ -194,16 +261,25 @@ class NearbyService {
   Future<bool> requestConnection(
     Peer peer, {
     Map<String, String> metadata = const {},
+    String? preSharedKey,
     Duration timeout = const Duration(seconds: 30),
   }) async {
+    if (preSharedKey != null && preSharedKey.isEmpty) {
+      throw ArgumentError('preSharedKey must not be empty');
+    }
     NearbyTransport transport;
 
-    final String? bleServiceUuid = peer.serviceUuid ??
+    final String? bleServiceUuid =
+        peer.serviceUuid ??
         (_currentDiscoveryOptions?.serviceId != null
-            ? BleDiscoveryService.generateServiceUuid(_currentDiscoveryOptions!.serviceId)
+            ? BleDiscoveryService.generateServiceUuid(
+                _currentDiscoveryOptions!.serviceId,
+              )
             : (_currentAdvertisingOptions?.serviceId != null
-                ? BleDiscoveryService.generateServiceUuid(_currentAdvertisingOptions!.serviceId)
-                : null));
+                  ? BleDiscoveryService.generateServiceUuid(
+                      _currentAdvertisingOptions!.serviceId,
+                    )
+                  : null));
 
     // Attempt TCP connection first if peer has IP/Port
     if (peer.ipAddress != null && peer.port != null) {
@@ -246,6 +322,7 @@ class NearbyService {
       localDisplayName: localDisplayName,
       payloadManager: _payloadManager,
       storageDirectory: storageDirectory,
+      preSharedKey: preSharedKey,
     );
 
     _activeSessions[peer.id] = session;
@@ -269,7 +346,10 @@ class NearbyService {
       }
     });
 
-    return await session.initiateHandshake(metadata: metadata, timeout: timeout);
+    return await session.initiateHandshake(
+      metadata: metadata,
+      timeout: timeout,
+    );
   }
 
   void _handleIncomingSocket(Socket socket) {
@@ -281,7 +361,7 @@ class NearbyService {
     final transport = TcpTransport.wrap(socket, peerId: 'pending');
     _setupIncomingSession(
       transport: transport,
-      medium: DiscoveryMedium.mdns,
+      medium: DiscoveryMedium.network,
       ipAddress: socket.remoteAddress.address,
       port: socket.remotePort,
       onCleanup: () => socket.destroy(),
@@ -326,142 +406,162 @@ class NearbyService {
       onCleanup?.call();
     });
 
-    sub = transport.incomingFrames.listen((frame) async {
-      if (frame.type == FrameType.handshakeInit) {
-        try {
-          // Extract remote peer info
-          final json =
-              jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
-          final String remotePeerId = json['peerId'] as String;
-          final String remoteDisplayName = json['displayName'] as String;
-          final Map<String, String> metadata =
-              (json['metadata'] as Map<dynamic, dynamic>?)?.map(
-                    (k, v) => MapEntry(k.toString(), v.toString()),
-                  ) ??
-                  {};
+    sub = transport.incomingFrames.listen(
+      (frame) async {
+        if (frame.type == FrameType.handshakeInit) {
+          try {
+            // Extract remote peer info
+            final json =
+                jsonDecode(utf8.decode(frame.body)) as Map<String, dynamic>;
+            final String remotePeerId = json['peerId'] as String;
+            final String remoteDisplayName = json['displayName'] as String;
+            final Map<String, String> metadata =
+                (json['metadata'] as Map<dynamic, dynamic>?)?.map(
+                  (k, v) => MapEntry(k.toString(), v.toString()),
+                ) ??
+                {};
 
-          handshakeTimer.cancel();
-          cleanupPending();
-          await sub.cancel();
+            handshakeTimer.cancel();
+            cleanupPending();
+            await sub.cancel();
 
-          if (transport is TcpTransport) {
-            transport.updatePeerId(remotePeerId);
-          } else if (transport is BlePeripheralTransport) {
-            transport.updatePeerId(remotePeerId);
-          }
+            if (transport is TcpTransport) {
+              transport.updatePeerId(remotePeerId);
+            } else if (transport is BlePeripheralTransport) {
+              transport.updatePeerId(remotePeerId);
+            }
 
-          // Check for existing active session with identical peer ID
-          if (_activeSessions.containsKey(remotePeerId)) {
-            final existingSession = _activeSessions[remotePeerId];
-            if (existingSession != null &&
-                existingSession.state != PeerConnectionState.disconnected) {
-              // Reject duplicate connection request to prevent unmanaged orphaned sessions
-              await transport.sendFrame(
-                PacketFrame.handshakeAck(
-                  accepted: false,
-                  peerId: localPeerId,
-                  displayName: localDisplayName,
-                  token: '',
-                  reason: 'Duplicate active session exists for peer $remotePeerId',
+            // Check for existing active session with identical peer ID
+            if (_activeSessions.containsKey(remotePeerId)) {
+              final existingSession = _activeSessions[remotePeerId];
+              if (existingSession != null &&
+                  existingSession.state != PeerConnectionState.disconnected) {
+                // Reject duplicate connection request to prevent unmanaged orphaned sessions
+                await transport.sendFrame(
+                  PacketFrame.handshakeAck(
+                    accepted: false,
+                    peerId: localPeerId,
+                    displayName: localDisplayName,
+                    token: '',
+                    reason:
+                        'Duplicate active session exists for peer $remotePeerId',
+                  ),
+                );
+                await transport.close();
+                onCleanup?.call();
+                return;
+              } else {
+                await existingSession?.disconnect();
+                _activeSessions.remove(remotePeerId);
+              }
+            }
+
+            final peer = Peer(
+              id: remotePeerId,
+              displayName: remoteDisplayName,
+              metadata: metadata,
+              discoveredVia: medium,
+              ipAddress: ipAddress,
+              port: port,
+              bleDeviceId: bleDeviceId,
+              lastSeen: DateTime.now(),
+            );
+
+            final session = NearbySession(
+              peer: peer,
+              transport: transport,
+              localPeerId: localPeerId,
+              localDisplayName: localDisplayName,
+              payloadManager: _payloadManager,
+              storageDirectory: storageDirectory,
+              preSharedKey:
+                  _currentAdvertisingOptions?.securityMode ==
+                      SecurityMode.preSharedKey
+                  ? _currentAdvertisingOptions?.preSharedKey
+                  : null,
+            );
+
+            _activeSessions[peer.id] = session;
+
+            session.stateStream.listen((state) {
+              _peerStateController.add(
+                PeerConnectionStateUpdate(
+                  peer: peer,
+                  state: state,
+                  sasPin: session.sasPin,
                 ),
+              );
+              if (state == PeerConnectionState.disconnected) {
+                _activeSessions.remove(peer.id);
+              }
+            });
+
+            // Feed HandshakeInit frame into session
+            await session.handleFrame(frame);
+
+            if (!session.authenticationMatches) {
+              await session.respondToHandshake(
+                accept: false,
+                reason: 'Connection authentication mode mismatch',
               );
               await transport.close();
               onCleanup?.call();
               return;
+            }
+
+            if (session.sasPin == null) {
+              // Key exchange failed or invalid token: reject handshake
+              await session.respondToHandshake(
+                accept: false,
+                reason: 'Authentication failed: invalid handshake key exchange',
+              );
+              await transport.close();
+              onCleanup?.call();
+              return;
+            }
+
+            final request = ConnectionRequest(
+              peer: peer,
+              authenticationPin: session.sasPin!,
+              metadata: metadata,
+              timestamp: DateTime.now(),
+            );
+
+            // Auto-accept if configured
+            if (_currentAdvertisingOptions?.securityMode !=
+                SecurityMode.pinVerification) {
+              await session.respondToHandshake(accept: true);
             } else {
-              await existingSession?.disconnect();
-              _activeSessions.remove(remotePeerId);
+              _connectionRequestController.add(request);
             }
-          }
-
-          final peer = Peer(
-            id: remotePeerId,
-            displayName: remoteDisplayName,
-            metadata: metadata,
-            discoveredVia: medium,
-            ipAddress: ipAddress,
-            port: port,
-            bleDeviceId: bleDeviceId,
-            lastSeen: DateTime.now(),
-          );
-
-          final session = NearbySession(
-            peer: peer,
-            transport: transport,
-            localPeerId: localPeerId,
-            localDisplayName: localDisplayName,
-            payloadManager: _payloadManager,
-            storageDirectory: storageDirectory,
-          );
-
-          _activeSessions[peer.id] = session;
-
-          session.stateStream.listen((state) {
-            _peerStateController.add(
-              PeerConnectionStateUpdate(
-                peer: peer,
-                state: state,
-                sasPin: session.sasPin,
-              ),
-            );
-            if (state == PeerConnectionState.disconnected) {
-              _activeSessions.remove(peer.id);
-            }
-          });
-
-          // Feed HandshakeInit frame into session
-          await session.handleFrame(frame);
-
-          if (session.sasPin == null) {
-            // Key exchange failed or invalid token: reject handshake
-            await session.respondToHandshake(
-              accept: false,
-              reason: 'Authentication failed: invalid handshake key exchange',
-            );
+          } catch (e) {
+            handshakeTimer.cancel();
+            cleanupPending();
+            await sub.cancel();
             await transport.close();
             onCleanup?.call();
-            return;
           }
-
-          final request = ConnectionRequest(
-            peer: peer,
-            authenticationPin: session.sasPin!,
-            metadata: metadata,
-            timestamp: DateTime.now(),
-          );
-
-          // Auto-accept if configured
-          if (_currentAdvertisingOptions?.securityMode ==
-              SecurityMode.autoAccept) {
-            await session.respondToHandshake(accept: true);
-          } else {
-            _connectionRequestController.add(request);
-          }
-        } catch (e) {
+        } else {
+          // Unexpected frame prior to handshakeInit; terminate connection
           handshakeTimer.cancel();
           cleanupPending();
           await sub.cancel();
           await transport.close();
           onCleanup?.call();
         }
-      } else {
-        // Unexpected frame prior to handshakeInit; terminate connection
+      },
+      onError: (_) {
         handshakeTimer.cancel();
         cleanupPending();
-        await sub.cancel();
-        await transport.close();
+        sub.cancel();
+        transport.close();
         onCleanup?.call();
-      }
-    }, onError: (_) {
-      handshakeTimer.cancel();
-      cleanupPending();
-      sub.cancel();
-      transport.close();
-      onCleanup?.call();
-    }, onDone: () {
-      handshakeTimer.cancel();
-      cleanupPending();
-    });
+      },
+      onDone: () {
+        handshakeTimer.cancel();
+        cleanupPending();
+      },
+    );
   }
 
   /// Accepts an incoming connection request from a peer.
@@ -524,11 +624,10 @@ class NearbyService {
 
   /// Broadcasts a raw byte array payload to all currently connected peers.
   Future<void> sendBytesToAll(Uint8List bytes) async {
-    for (final session in _activeSessions.values) {
-      if (session.state == PeerConnectionState.connected) {
-        await session.sendBytes(bytes);
-      }
-    }
+    final sessions = _activeSessions.values
+        .where((session) => session.state == PeerConnectionState.connected)
+        .toList();
+    await Future.wait(sessions.map((session) => session.sendBytes(bytes)));
   }
 
   /// Sends a local file payload to a specific connected peer.
@@ -542,7 +641,11 @@ class NearbyService {
     if (session == null) {
       throw StateError('Peer $peerId is not connected');
     }
-    await session.sendFile(file, customFileName: customFileName, payloadId: payloadId);
+    await session.sendFile(
+      file,
+      customFileName: customFileName,
+      payloadId: payloadId,
+    );
   }
 
   /// Sends a continuous byte stream to a specific connected peer.
@@ -568,6 +671,11 @@ class NearbyService {
     await stopAdvertising();
     await stopDiscovery();
     await disconnectAll();
+    for (final channel in List.of(_broadcastChannels)) {
+      await channel.dispose();
+    }
+    _broadcastChannels.clear();
+    _defaultBroadcastChannel = null;
     await _discoveryCoordinator.dispose();
     await _payloadManager.dispose();
     await _connectionRequestController.close();

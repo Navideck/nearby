@@ -1,111 +1,78 @@
 # nearby
 
-Cross-platform peer-to-peer networking for Flutter — bringing the power of Apple's Multipeer Connectivity and Google's Nearby Connections seamlessly across mobile and desktop.
+A robust, multiplatform peer-to-peer discovery, secure data transfer, and connectionless broadcasting plugin for Flutter.
 
-Built with pure Dart socket orchestration on top of **[Bonsoir](https://pub.dev/packages/bonsoir)** (mDNS / Bonjour) and **[Universal BLE](https://pub.dev/packages/universal_ble)** (Bluetooth Low Energy).
-
-<p align="center">
-  <img src="doc/screenshot.jpg" alt="Nearby Cross-Platform Sync Demo" width="800"/>
-</p>
+Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby` supports dual communication paradigms over local Wi-Fi / LAN (mDNS + UDP/TCP) and Bluetooth Low Energy (BLE).
 
 ---
 
-## 📱 Platform Support
+## 🌟 Dual Communication Paradigms
 
-| Platform | Discovery (mDNS) | Discovery (BLE) | High-Speed TCP | BLE Fallback |
-| -------- | :--------------: | :-------------: | :------------: | :----------: |
-| Android  | ✅               | ✅              | ✅             | ✅           |
-| iOS      | ✅               | ✅              | ✅             | ✅           |
-| macOS    | ✅               | ✅              | ✅             | ✅           |
-| Windows  | ✅               | ✅              | ✅             | ✅           |
-| Linux    | ✅               | ⚠️*             | ✅             | ⚠️*          |
-
-\* *Linux supports BLE Central mode (scanning and connecting) only; BLE Peripheral advertising is not supported on Linux.*
-
----
-
-## ✨ Features
-
-- **🚀 Hybrid Discovery**: Simultaneous dual-channel discovery combining zero-config local network broadcast (mDNS / Bonjour) with Bluetooth Low Energy (BLE) peripheral/central scanning.
-- **⚡ High-Throughput Direct TCP Sockets**: Primary payload channel uses framing-optimized raw TCP sockets with zero latency and high file transfer rates over local network (Wi-Fi or Ethernet).
-- **📶 Seamless BLE Fallback**: Automatic GATT characteristic fallback when peers are in Bluetooth proximity but not connected to the same Wi-Fi network.
-- **🔒 Flexible Security Handshake**:
-  - **Auto-Accept Mode**: Rapid pairing for automated devices.
-  - **SAS PIN Verification**: Cryptographically derived Short Authentication String (4 or 6-digit symmetric PIN) for visual user verification on both screens.
-- **📦 Multi-Type Payload Engine**:
-  - **Bytes**: Fast, reliable byte packets for messages, control commands, and JSON payloads.
-  - **File**: High-speed chunked file transfers with live progress callbacks, percentage tracking, and cancellation.
-  - **Stream**: Real-time continuous byte streaming for audio, video chunks, and sensor telemetry.
-- **🖥️ True Cross-Platform**: Android, iOS, macOS, Windows, and Linux.
-
----
-
-## 🏗️ Architecture & Protocol
+`nearby` supports two complementary communication modes under a unified API:
 
 ```
-+-------------------------------------------------------------+
-|                      NearbyService                          |
-+-------------------------------------------------------------+
-|                    NearbySession Engine                     |
-+------------------------------+------------------------------+
-|     Discovery Coordinator    |        Payload Engine        |
-|  +------------+------------+ | +---------+--------+-------+ |
-|  |   Bonsoir  |  Univ. BLE | | |  Bytes  |  File  | Stream| |
-|  |   (mDNS)   |   (BLE)    | | +---------+--------+-------+ |
-+--+------------+------------+-+---------------+--------------+
-|       Packet Framer (Magic Bytes + Length + CRC32)          |
-+------------------------------+------------------------------+
-|   TCP Socket (High Bandwidth)|   BLE GATT (Direct Fallback) |
-+------------------------------+------------------------------+
+                                  ┌─────────────────────────┐
+                                  │      NearbyService      │
+                                  └───────────┬─────────────┘
+                                              │
+                      ┌───────────────────────┴───────────────────────┐
+                      ▼                                               ▼
+         ┌─────────────────────────┐                     ┌─────────────────────────┐
+         │   Connected Sessions    │                     │   Broadcast Channels    │
+         │      (1:1 P2P)          │                     │      (1:Many)           │
+         └────────────┬────────────┘                     └────────────┬────────────┘
+                      │                                               │
+        ┌─────────────┴─────────────┐                   ┌─────────────┴─────────────┐
+        ▼                           ▼                   ▼                           ▼
+   TCP Sockets                 BLE GATT           UDP Multicast              BLE Advertisements
+  (LAN / Wi-Fi)              (Peripheral)         (Datagrams)               (Manufacturer Data)
 ```
 
-Every frame on the wire is wrapped by the packet framer (`magic bytes → length → body → CRC32`), so corrupted or partial reads are detected and dropped rather than desynchronizing the stream.
+| Feature | 🤝 Connected Sessions (1:1) | 📡 Broadcast Channels (1:Many) |
+| :--- | :--- | :--- |
+| **Topology** | 1-to-1 Point-to-Point | 1-to-Many Unicast / Multicast |
+| **Connection Overhead** | Requires connection + SAS PIN handshake | **Zero connection overhead** (Stateless) |
+| **Device Scale** | Bound by platform TCP/GATT limits (~3–7 BLE) | **Unlimited listeners** simultaneously |
+| **Transports** | TCP sockets & BLE GATT characteristics | UDP Multicast datagrams & BLE Advertisements |
+| **Data Types** | Byte packets, large disk files, continuous streams | Opaque datagrams with channel and sender framing |
+| **Best For** | File sharing, remote control, chat, audio streaming | Mesh beacons, presence |
 
 ---
 
-## 📦 Installation
+## 📦 Features
 
-Add to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  nearby:
-    path: /path/to/nearby   # or git/pub once published
-```
-
-Then run:
-
-```bash
-flutter pub get
-```
-
-> **Note**: This package is pure Dart on top of Bonsoir and Universal BLE. Make sure your host app also declares the platform permissions below.
+- **Multiplatform**: iOS, macOS, Android, Windows, Linux.
+- **Hybrid Transports**: Seamlessly multiplexes Wi-Fi/LAN and Bluetooth Low Energy.
+- **Multiplexed BLE Scanning**: Centralized BLE scan dispatcher prevents callback collisions when discovery and broadcast channels run concurrently.
+- **Encrypted sessions**: Ephemeral Diffie-Hellman keys, AES-256-GCM frame encryption, HMAC authentication, optional SAS PIN verification, and mutual pre-shared-key authentication.
+- **Chunked Payload Engine**: Reliable chunking, interleaving, and CRC32 verification for byte messages, files, and live streams.
+- **Connectionless Broadcast Channels**: Ultra-low latency UDP multicast and BLE manufacturer advertising for 1:Many real-time broadcasting.
 
 ---
 
-## 📱 Platform Setup & Permissions
+## ⚙️ Platform Permissions & Setup
 
 ### Android (`android/app/src/main/AndroidManifest.xml`)
 
 ```xml
-<!-- Local Network & mDNS -->
-<uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Local Network Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
-<!-- Bluetooth & Proximity -->
-<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Bluetooth Permissions (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Legacy Bluetooth Permissions (Android 11 and lower) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+</manifest>
 ```
-
-Runtime permissions (`BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `NEARBY_WIFI_DEVICES` depending on OS version) must be requested from Dart before starting discovery/advertising — e.g. with [`permission_handler`](https://pub.dev/packages/permission_handler).
 
 ### iOS (`ios/Runner/Info.plist`) & macOS (`macos/Runner/Info.plist`)
 
@@ -122,11 +89,11 @@ Runtime permissions (`BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `NEARBY_WIFI_DEVIC
 </array>
 ```
 
-> Replace `_nearby-app._tcp` with `<your-serviceId>._tcp` if you use a custom `serviceId`.
+> **Note**: Apple platforms (iOS 14+, macOS 11+) require declaring each Bonjour service type in `NSBonjourServices` formatted as `_<serviceId>._tcp`. The declared service must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions` (e.g. `nearby-app` requires `_nearby-app._tcp`).
 
 ### macOS Entitlements (`macos/Runner/*.entitlements`)
 
-Sandboxed macOS apps must enable network client/server and Bluetooth entitlements in **both** DebugProfile and Release:
+Enable network client/server and Bluetooth in **both** `DebugProfile.entitlements` and `Release.entitlements`:
 
 ```xml
 <key>com.apple.security.network.server</key>
@@ -137,17 +104,9 @@ Sandboxed macOS apps must enable network client/server and Bluetooth entitlement
 <true/>
 ```
 
-### Linux Requirements
-
-- **mDNS / Avahi**: Ensure the Avahi daemon and client libraries are installed:
-  ```bash
-  sudo apt install avahi-daemon libavahi-client-dev
-  ```
-- **Bluetooth**: Requires BlueZ (`sudo apt install bluez`). Note: `universal_ble` supports BLE Central mode (scanning and connecting) on Linux; BLE Peripheral advertising is not currently supported.
-
 ---
 
-## 🚀 Quick Start
+## 🚀 Usage Guide
 
 ### 1. Initialize `NearbyService`
 
@@ -155,29 +114,29 @@ Sandboxed macOS apps must enable network client/server and Bluetooth entitlement
 import 'package:nearby/nearby.dart';
 
 final nearby = NearbyService(
-  localDisplayName: 'My iPad Pro',
-  // Optional: stable peer identity across restarts (random UUID by default)
-  // localPeerId: 'my-stable-device-id',
-  //
-  // Optional: where incoming file payloads are written
-  // storageDirectory: await getApplicationDocumentsDirectory(),
+  localDisplayName: 'Device A',
+  // Optional: persistent peer ID across restarts (random hex ID by default)
+  localPeerId: 'device-node-01',
 );
 ```
 
-### 2. Advertise Device
+---
 
+### 2. Mode A: Connection-Oriented Sessions (1:1)
+
+#### A. Start Advertising Presence
 ```dart
 await nearby.startAdvertising(
-  options: const AdvertisingOptions(
+  options: AdvertisingOptions(
     serviceId: 'nearby-app',
     strategy: DiscoveryStrategy.hybrid,
-    securityMode: SecurityMode.pinVerification, // or SecurityMode.autoAccept
+    securityMode: SecurityMode.preSharedKey,
+    preSharedKey: configuredSecret,
   ),
 );
 ```
 
-### 3. Discover Nearby Peers
-
+#### B. Discover Peers & Connect
 ```dart
 // Listen to discovered peers
 nearby.discoveredPeersStream.listen((peers) {
@@ -192,159 +151,182 @@ await nearby.startDiscovery(
     strategy: DiscoveryStrategy.hybrid,
   ),
 );
+
+// Connect to a peer (TCP first, BLE fallback)
+final connected = await nearby.requestConnection(
+  peer,
+  preSharedKey: configuredSecret,
+);
 ```
 
-### 4. Connect & Handshake
+`SecurityMode.preSharedKey` mutually authenticates both peers and mixes the
+secret into the encrypted session key without sending it. Use
+`SecurityMode.pinVerification` instead when users should compare a per-session
+SAS PIN, or `SecurityMode.autoAccept` for encrypted but unauthenticated peers.
+Connected protocol version 3 does not accept older session frames.
 
-Both devices should run advertising **and** discovery for bidirectional visibility.
-
-**Initiator** — request a connection to a discovered peer:
-
+#### C. Handle Inbound Connection & PIN Verification
 ```dart
-final success = await nearby.requestConnection(peer);
-
-// Track connection lifecycle + get the SAS PIN shown on this device
-nearby.peerStateStream.listen((update) {
-  print('${update.peer.displayName}: ${update.state.name} (PIN: ${update.sasPin})');
-});
-```
-
-**Receiver (advertiser)** — handle incoming connection requests and verify the PIN:
-
-```dart
+// Advertiser verifies PIN with initiator
 nearby.connectionRequestsStream.listen((request) {
-  print('Incoming request from ${request.peer.displayName} with PIN: ${request.authenticationPin}');
-  // Show request.authenticationPin to the user and compare with the initiator's screen,
-  // then accept or reject:
+  print('Request from ${request.peer.displayName} with PIN: ${request.authenticationPin}');
+  // Verify PIN visually, then accept:
   nearby.acceptConnection(request.peer.id);
-  // Or reject:
-  // nearby.rejectConnection(request.peer.id, reason: 'Busy');
 });
 ```
 
-With `SecurityMode.autoAccept`, incoming requests are accepted automatically and never appear on `connectionRequestsStream`.
-
-### 5. Send & Receive Payloads
-
-#### Send Byte Packet (Messages / Commands)
+#### D. Transfer Bytes, Files, or Streams
 ```dart
-final bytes = Uint8List.fromList(utf8.encode('Hello Nearby Peer!'));
-await nearby.sendBytes(peerId, bytes);
+// 1. Send byte message
+await nearby.sendBytes(peerId, Uint8List.fromList(utf8.encode('Hello Nearby Peer!')));
 
-// Or broadcast to all connected peers
-await nearby.sendBytesToAll(bytes);
-```
-
-#### Send File with Progress Updates
-```dart
-final file = File('/path/to/my_image.png');
-await nearby.sendFile(peerId, file, customFileName: 'vacation.png');
-
-// Track live progress
+// 2. Send file with progress tracking
 nearby.payloadProgressStream.listen((update) {
-  print('Payload #${update.payloadId}: ${update.percentage}% (${update.bytesTransferred}/${update.totalBytes} bytes)');
+  print('Transfer #${update.payloadId}: ${update.percentage}%');
 });
-```
+await nearby.sendFile(peerId, File('/path/to/document.pdf'));
 
-#### Cancel an In-Flight Transfer
-```dart
-nearby.cancelPayload(payloadId);
-```
-
-#### Stream Continuous Telemetry / Audio
-```dart
+// 3. Pipe live byte stream
 final streamController = StreamController<List<int>>();
 await nearby.sendStream(peerId, streamController.stream);
+streamController.add([0x01, 0x02, 0x03]);
 
-// Push stream chunks in real-time
-streamController.add([1, 2, 3, 4]);
-```
-
-#### Receive Incoming Payloads
-```dart
+// 4. Receive incoming payloads
 nearby.payloadReceivedStream.listen((payload) {
   switch (payload.type) {
     case PayloadType.bytes:
-      final text = utf8.decode(payload.bytes!);
-      print('Received message: $text');
+      print('Received: ${utf8.decode(payload.bytes!)}');
     case PayloadType.file:
-      print('Received file at: ${payload.file!.path} (${payload.fileName})');
+      print('File saved at: ${payload.file!.path}');
     case PayloadType.stream:
-      print('Receiving real-time stream...');
-      payload.stream!.listen((chunk) {
-        // Process stream chunk
-      });
+      payload.stream!.listen((chunk) => print('Stream chunk: ${chunk.length} bytes'));
   }
 });
 ```
 
-### 6. Disconnect & Tear Down
+---
 
+### 3. Mode B: Connectionless Broadcasts (1:Many)
+
+Broadcast channels support multiple distinct senders and connectionless listeners over UDP and BLE, without pairing. This branch introduces a new wire format; it does not accept the earlier unframed BLE or network broadcasts.
+
+Pass a persistent installation ID as `NearbyService(localPeerId: ...)` or `BroadcastChannel(senderId: ...)`. Every received `senderId` is the same eight-character SHA-256 fingerprint over BLE and LAN, independent of IP address, service name, or BLE address. LAN additionally supplies `fullSenderId`, `address`, `deviceName`, and arbitrary string `attributes`. Fingerprints are 32 bits and can collide; they are not authentication. Broadcasts are neither encrypted nor authenticated.
+
+BLE carries at most **10 application bytes**. Nearby adds a four-byte channel fingerprint and four-byte sender fingerprint. On iOS/macOS, the resulting 18 bytes become `N2` plus unpadded Base64URL in the local name (26 characters; with flags and the AD header, 31 legacy bytes). Android and Windows put the same bytes in manufacturer data. No advertised service UUID, GATT connection, extended advertisement, or fragmentation is required. The caller never constructs a BLE name or manufacturer record. `localName` is network display metadata only.
+
+| Platform | BLE transmit carrier | BLE receive | Network |
+| --- | --- | --- | --- |
+| Android | Manufacturer data | Yes | Yes |
+| iOS/macOS | Local name, foreground | Yes | Yes |
+| Windows | Manufacturer data | Yes | Yes |
+| Linux | Unsupported peripheral mode | Yes | Yes |
+| Web | Unsupported | Unsupported | Unsupported |
+
+Windows transmit requires [universal_ble PR #290](https://github.com/Navideck/universal_ble/pull/290) until it is released; use a dependency override to that PR's commit. Apple background advertising omits local names, so this carrier is foreground-only. Requested update frequency is not an on-air guarantee, especially with Windows' best-effort advertising policy.
+
+Transport failures are emitted on `channel.errors` independently; one unavailable transport does not stop the other. Network transport joins IPv4 interfaces, includes loopback, sends an IPv4 broadcast fallback, and refreshes interfaces every five seconds. Nearby holds Android's multicast lock only while a network listener needs it. BLE receive timestamps use native microsecond timestamps when available. Busy BLE sends skip updates instead of queuing stale bytes.
+
+Scans are shared across Nearby listeners without overwriting `UniversalBle.onScanResult`. Nearby temporarily widens an existing scan; set `BleScanDispatcher.instance.resumeInterruptedScan` to restore the application's previous scan/filter when the last Nearby listener stops. Use only one BLE advertising owner per process; connected peripheral advertising and broadcast advertising share the platform peripheral API.
+
+#### A. Dedicated Broadcast Channel
 ```dart
-await nearby.disconnectPeer(peerId);       // single session
-await nearby.disconnectAll();               // every session
-await nearby.stopDiscovery();
-await nearby.stopAdvertising();
-await nearby.dispose();                     // full teardown
+// Create a dedicated channel
+final channel = nearby.createBroadcastChannel(
+  const BroadcastChannelConfig(
+    channelId: 'custom-channel',
+    strategy: DiscoveryStrategy.hybrid,
+    multicastAddress: '239.255.0.1',
+    multicastPort: 9876,
+    bleCompanyId: 0xFFFF,
+  ),
+);
+
+// Start listening for incoming broadcast datagrams
+await channel.startListening();
+channel.stream.listen((packet) {
+  print('Broadcast from ${packet.senderId} via ${packet.medium.name}: ${packet.data.length} bytes');
+});
+
+// Broadcast datagrams to all nearby devices
+await channel.startBroadcasting();
+await channel.send(Uint8List.fromList([0x01, 0x02, 0x03, 0x04]), localName: 'Sender-Node');
+
+// Network-only control packets keep Nearby framing but are not advertised over BLE.
+await channel.sendNetwork(Uint8List.fromList([0x05, 0x06]));
+
+// A hybrid channel can also listen only on the network transport.
+await channel.startListening(strategy: DiscoveryStrategy.networkOnly);
+```
+
+#### B. Convenience Service Broadcasts
+```dart
+// Start listening on the default channel before receiving datagrams
+await nearby.defaultBroadcastChannel.startListening();
+
+// Listen on default broadcast stream
+nearby.onBroadcastReceived.listen((packet) {
+  print('Received broadcast: ${packet.data}');
+});
+
+// Quick broadcast on default channel
+await nearby.broadcast(Uint8List.fromList([0xAA, 0xBB]));
 ```
 
 ---
 
-## 📖 API Overview
+### 4. Teardown & Lifecycle
+
+```dart
+// Disconnect individual peers or all
+await nearby.disconnectPeer(peerId);
+await nearby.disconnectAll();
+
+// Stop discovery / advertising
+await nearby.stopDiscovery();
+await nearby.stopAdvertising();
+
+// Full cleanup (closes all sockets, BLE scans, and broadcast channels)
+await nearby.dispose();
+```
+
+---
+
+## 📖 API Reference
 
 ### `NearbyService`
 
-| Member | Description |
-| ------ | ----------- |
-| `startAdvertising({options})` | Broadcast presence over mDNS and/or BLE and listen for inbound connections. |
-| `stopAdvertising()` | Stop broadcasting and close inbound servers. |
-| `startDiscovery({options})` | Browse for advertising peers. |
-| `stopDiscovery()` | Stop browsing. |
-| `requestConnection(peer)` | Connect to a discovered peer (TCP first, BLE fallback) and run the handshake. Returns `Future<bool>`. |
-| `acceptConnection(peerId)` | Accept a pending incoming request. |
-| `rejectConnection(peerId, {reason})` | Reject a pending incoming request. |
-| `disconnectPeer(peerId)` / `disconnectAll()` | Terminate one or all sessions. |
-| `sendBytes(peerId, bytes)` / `sendBytesToAll(bytes)` | Send byte payloads. |
-| `sendFile(peerId, file, {customFileName})` | Send a file with chunked progress. |
-| `sendStream(peerId, stream)` | Pipe a continuous byte stream. |
-| `cancelPayload(payloadId)` | Abort an in-progress transfer. |
-| `dispose()` | Shut down everything. |
-
-Streams: `discoveredPeersStream`, `connectionRequestsStream`, `peerStateStream`, `payloadReceivedStream`, `payloadProgressStream`.
-Getters: `discoveredPeers`, `connectedPeers`, `isAdvertising`, `isDiscovering`.
-
-### Key Models
-
-| Model | Notes |
-| ----- | ----- |
-| `Peer` | `id`, `displayName`, `metadata`, `discoveredVia` (`mdns` / `ble` / `hybrid`), `ipAddress`, `port`, `bleDeviceId`, `rssi`, `lastSeen`. |
-| `AdvertisingOptions` | `serviceId` (required), `strategy`, `securityMode`, `metadata` (TXT record), `port` (fixed TCP port; dynamic if omitted). |
-| `DiscoveryOptions` | `serviceId` (required), `strategy`, `metadataFilter`. |
-| `ConnectionRequest` | Incoming request with `peer`, `authenticationPin`, `metadata`. |
-| `NearbyPayload` | Received payload; inspect `type` then `bytes` / `file` / `stream`. |
-| `PayloadTransferUpdate` | `payloadId`, `bytesTransferred`, `totalBytes`, `status`, `percentage`. |
-
-### Behavior Notes
-
-- Up to **32 concurrent sessions/pending handshakes** are supported; further inbound connections are dropped.
-- Incoming handshakes time out after **15 seconds**.
-- Connection attempts try **TCP first**, falling back to BLE when the LAN socket fails or the peer has no IP/port.
-- Duplicate inbound connections from an already-connected peer are rejected automatically.
+| API | Type | Description |
+| :--- | :--- | :--- |
+| `startAdvertising({options})` | Method | Starts mDNS & BLE peripheral advertising. |
+| `advertisingPort` | Getter | Actual TCP port selected for connected sessions. |
+| `stopAdvertising()` | Method | Stops advertising and closes inbound servers. |
+| `startDiscovery({options})` | Method | Starts browsing for nearby advertising peers. |
+| `stopDiscovery()` | Method | Stops discovery and stops scanning. |
+| `requestConnection(peer)` | Method | Requests secure connection with Diffie-Hellman handshake. |
+| `acceptConnection(peerId)` | Method | Accepts incoming connection request after PIN check. |
+| `rejectConnection(peerId)` | Method | Rejects incoming connection request. |
+| `sendBytes(peerId, bytes)` | Method | Sends byte payload to connected peer. |
+| `sendBytesToAll(bytes)` | Method | Sends byte payload to all connected peers. |
+| `sendFile(peerId, file)` | Method | Sends file payload with progress tracking. |
+| `sendStream(peerId, stream)` | Method | Pipes continuous byte stream to connected peer. |
+| `createBroadcastChannel(config)`| Method | Creates and registers managed 1:Many `BroadcastChannel`. |
+| `broadcast(data, ...)` | Method | Convenience method to broadcast datagram to listeners. |
+| `onBroadcastReceived` | Stream | Stream of datagrams from default broadcast channel. |
+| `discoveredPeersStream` | Stream | Live list of discovered peers. |
+| `connectionRequestsStream` | Stream | Inbound connection requests with SAS PINs. |
+| `payloadReceivedStream` | Stream | Inbound payload stream (`Bytes`, `File`, `Stream`). |
+| `dispose()` | Method | Cleanly shuts down all sessions, servers, and channels. |
 
 ---
 
 ## 🧪 Testing
 
-Run all unit tests, framing verifications, and mock integration suites:
+Run the full test suite (65+ unit & integration tests):
 
 ```bash
 flutter test
 ```
 
-## 📂 Example
+## 📄 License
 
-A complete working demo lives in [`example/`](example/) — run it on two physical devices (or simulators on the same machine) to see discovery, PIN verification, and file transfer end-to-end:
-
-```bash
-cd example && flutter run
-```
+MIT License.

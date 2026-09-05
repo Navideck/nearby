@@ -28,11 +28,7 @@ class ConnectionRequest {
 }
 
 /// Response status to a connection request.
-enum ConnectionResponseStatus {
-  accepted,
-  rejected,
-  timedOut,
-}
+enum ConnectionResponseStatus { accepted, rejected, timedOut }
 
 /// Connection response sent back to the initiator.
 class ConnectionResponse {

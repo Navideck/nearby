@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 
@@ -26,6 +27,35 @@ void main() {
       expect(json['token'], equals('token_abc'));
       expect(json['metadata']['version'], equals('2.0'));
       expect(json['metadata']['role'], equals('host'));
+      expect(json['authentication'], equals('default'));
+    });
+
+    test('Pre-shared-key handshake frames carry proofs, not secrets', () {
+      final init = PacketFrame.handshakeInit(
+        peerId: 'peer_123',
+        displayName: 'Alice',
+        token: 'public_key',
+        usesPreSharedKey: true,
+      );
+      final initJson =
+          jsonDecode(utf8.decode(init.body)) as Map<String, dynamic>;
+      expect(initJson['authentication'], 'preSharedKey');
+      expect(initJson.toString(), isNot(contains('shared secret')));
+
+      final ack = PacketFrame.handshakeAck(
+        peerId: 'peer_456',
+        displayName: 'Bob',
+        token: 'public_key',
+        accepted: true,
+        usesPreSharedKey: true,
+        proof: 'proof_value',
+      );
+      final ackJson = jsonDecode(utf8.decode(ack.body)) as Map<String, dynamic>;
+      expect(ackJson['authentication'], 'preSharedKey');
+      expect(ackJson['proof'], 'proof_value');
+
+      final confirm = PacketFrame.handshakeConfirm(proof: 'confirm_value');
+      expect(confirm.type, FrameType.handshakeConfirm);
     });
 
     test('HandshakeAck frame with accepted=true', () {
@@ -125,7 +155,7 @@ void main() {
       expect(parsed, isNull);
     });
 
-    test('PacketFrame authenticated serialization and HMAC verification', () {
+    test('PacketFrame encrypted serialization and authentication', () {
       final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
       final frame = PacketFrame.payloadChunk(
         payloadId: 555,
@@ -134,115 +164,137 @@ void main() {
       );
 
       final authBytes = frame.toBytes(sessionKey: key);
-      // Length should be 20 header + 5 body + 4 CRC32 + 32 HMAC tag = 61
-      expect(authBytes.length, equals(20 + 5 + 4 + 32));
+      // AES-GCM adds a 12-byte nonce and 16-byte tag to the encrypted body.
+      expect(authBytes.length, equals(20 + 12 + 5 + 16 + 4 + 32));
+      expect(authBytes.sublist(20, 25), isNot(equals(frame.body)));
 
       final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);
       expect(parsed, isNotNull);
       expect(parsed!.authTag, isNotNull);
       expect(parsed.authTag!.length, equals(32));
       expect(parsed.verifyAuthTag(key), isTrue);
+      expect(parsed.decrypt(key).body, equals(frame.body));
 
       final wrongKey = Uint8List.fromList(List.generate(32, (i) => i + 2));
       expect(PacketFrame.fromBytes(authBytes, sessionKey: wrongKey), isNull);
       expect(parsed.verifyAuthTag(wrongKey), isFalse);
     });
 
-    test('PacketFrame rejection on tampered payload in authenticated frame', () {
-      final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
-      final frame = PacketFrame.payloadChunk(
-        payloadId: 555,
-        sequence: 2,
-        chunkData: Uint8List.fromList([1, 2, 3, 4, 5]),
-      );
+    test(
+      'PacketFrame rejection on tampered payload in authenticated frame',
+      () {
+        final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
+        final frame = PacketFrame.payloadChunk(
+          payloadId: 555,
+          sequence: 2,
+          chunkData: Uint8List.fromList([1, 2, 3, 4, 5]),
+        );
 
-      final authBytes = frame.toBytes(sessionKey: key);
-      // Tamper with body byte and recompute CRC32 to bypass simple checksum
-      authBytes[20] = 0xAA;
-      final newCrc = Crc32.compute(authBytes.sublist(0, 25));
-      ByteData.sublistView(authBytes).setUint32(25, newCrc, Endian.big);
+        final authBytes = frame.toBytes(sessionKey: key);
+        final encodedBodyLength = ByteData.sublistView(
+          authBytes,
+        ).getUint32(16, Endian.big);
+        final crcOffset = 20 + encodedBodyLength;
 
-      // CRC32 passes, but HMAC verification MUST fail and reject the packet
-      final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);
-      expect(parsed, isNull);
-    });
+        // Tamper with encrypted body byte and recompute CRC32 to bypass simple checksum
+        authBytes[20] ^= 0xFF;
+        final newCrc = Crc32.compute(authBytes.sublist(0, crcOffset));
+        ByteData.sublistView(authBytes).setUint32(crcOffset, newCrc, Endian.big);
+
+        // CRC32 passes when parsed without key
+        expect(PacketFrame.fromBytes(authBytes), isNotNull);
+
+        // CRC32 passes, but HMAC verification MUST fail and reject the packet
+        final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);
+        expect(parsed, isNull);
+      },
+    );
   });
 
   group('PacketFramer Stream Processing', () {
-    test('Frames stream correctly when chunks arrive in single packet', () async {
-      final framer = PacketFramer();
-      final frame1 = PacketFrame.heartbeat();
-      final frame2 = PacketFrame.payloadChunk(
-        payloadId: 100,
-        sequence: 0,
-        chunkData: Uint8List.fromList([10, 20, 30]),
-      );
+    test(
+      'Frames stream correctly when chunks arrive in single packet',
+      () async {
+        final framer = PacketFramer();
+        final frame1 = PacketFrame.heartbeat();
+        final frame2 = PacketFrame.payloadChunk(
+          payloadId: 100,
+          sequence: 0,
+          chunkData: Uint8List.fromList([10, 20, 30]),
+        );
 
-      final collected = <PacketFrame>[];
-      final sub = framer.frames.listen(collected.add);
+        final collected = <PacketFrame>[];
+        final sub = framer.frames.listen(collected.add);
 
-      framer.addBytes(frame1.toBytes());
-      framer.addBytes(frame2.toBytes());
+        framer.addBytes(frame1.toBytes());
+        framer.addBytes(frame2.toBytes());
 
-      await Future.delayed(const Duration(milliseconds: 20));
+        await Future.delayed(const Duration(milliseconds: 20));
 
-      expect(collected.length, equals(2));
-      expect(collected[0].type, equals(FrameType.heartbeat));
-      expect(collected[1].type, equals(FrameType.payloadChunk));
-      expect(collected[1].payloadId, equals(100));
+        expect(collected.length, equals(2));
+        expect(collected[0].type, equals(FrameType.heartbeat));
+        expect(collected[1].type, equals(FrameType.payloadChunk));
+        expect(collected[1].payloadId, equals(100));
 
-      await sub.cancel();
-      await framer.close();
-    });
+        await sub.cancel();
+        await framer.close();
+      },
+    );
 
-    test('Frames stream correctly when packet is fragmented into tiny chunks', () async {
-      final framer = PacketFramer();
-      final frame = PacketFrame.handshakeInit(
-        peerId: 'peer_frag',
-        displayName: 'Fragmented Peer Device',
-        token: 'frag_token_123',
-      );
+    test(
+      'Frames stream correctly when packet is fragmented into tiny chunks',
+      () async {
+        final framer = PacketFramer();
+        final frame = PacketFrame.handshakeInit(
+          peerId: 'peer_frag',
+          displayName: 'Fragmented Peer Device',
+          token: 'frag_token_123',
+        );
 
-      final fullBytes = frame.toBytes();
-      final collected = <PacketFrame>[];
-      final sub = framer.frames.listen(collected.add);
+        final fullBytes = frame.toBytes();
+        final collected = <PacketFrame>[];
+        final sub = framer.frames.listen(collected.add);
 
-      // Feed 3 bytes at a time
-      for (int i = 0; i < fullBytes.length; i += 3) {
-        final end = (i + 3 < fullBytes.length) ? i + 3 : fullBytes.length;
-        framer.addBytes(fullBytes.sublist(i, end));
-      }
+        // Feed 3 bytes at a time
+        for (int i = 0; i < fullBytes.length; i += 3) {
+          final end = (i + 3 < fullBytes.length) ? i + 3 : fullBytes.length;
+          framer.addBytes(fullBytes.sublist(i, end));
+        }
 
-      await Future.delayed(const Duration(milliseconds: 20));
+        await Future.delayed(const Duration(milliseconds: 20));
 
-      expect(collected.length, equals(1));
-      expect(collected[0].type, equals(FrameType.handshakeInit));
+        expect(collected.length, equals(1));
+        expect(collected[0].type, equals(FrameType.handshakeInit));
 
-      await sub.cancel();
-      await framer.close();
-    });
+        await sub.cancel();
+        await framer.close();
+      },
+    );
 
-    test('Framer recovers from noise/garbage bytes before valid packet', () async {
-      final framer = PacketFramer();
-      final frame = PacketFrame.heartbeat();
+    test(
+      'Framer recovers from noise/garbage bytes before valid packet',
+      () async {
+        final framer = PacketFramer();
+        final frame = PacketFrame.heartbeat();
 
-      final noise = Uint8List.fromList([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
-      final valid = frame.toBytes();
-      final combined = Uint8List.fromList([...noise, ...valid]);
+        final noise = Uint8List.fromList([0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
+        final valid = frame.toBytes();
+        final combined = Uint8List.fromList([...noise, ...valid]);
 
-      final collected = <PacketFrame>[];
-      final sub = framer.frames.listen(collected.add);
+        final collected = <PacketFrame>[];
+        final sub = framer.frames.listen(collected.add);
 
-      framer.addBytes(combined);
+        framer.addBytes(combined);
 
-      await Future.delayed(const Duration(milliseconds: 20));
+        await Future.delayed(const Duration(milliseconds: 20));
 
-      expect(collected.length, equals(1));
-      expect(collected[0].type, equals(FrameType.heartbeat));
+        expect(collected.length, equals(1));
+        expect(collected[0].type, equals(FrameType.heartbeat));
 
-      await sub.cancel();
-      await framer.close();
-    });
+        await sub.cancel();
+        await framer.close();
+      },
+    );
   });
 
   group('CRC32 Algorithm', () {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 
@@ -68,47 +69,50 @@ void main() {
       expect(pinSideA, equals(pinSideB));
     });
 
-    test('calculateSasPin respects 4 and 6 digit counts and rejects others', () {
-      final pin4 = SecurityManager.calculateSasPin(
-        localPeerId: 'id1',
-        localToken: 'tok1',
-        remotePeerId: 'id2',
-        remoteToken: 'tok2',
-        pinDigits: 4,
-      );
-      expect(pin4.length, equals(4));
-
-      final pin6 = SecurityManager.calculateSasPin(
-        localPeerId: 'id1',
-        localToken: 'tok1',
-        remotePeerId: 'id2',
-        remoteToken: 'tok2',
-        pinDigits: 6,
-      );
-      expect(pin6.length, equals(6));
-
-      expect(
-        () => SecurityManager.calculateSasPin(
+    test(
+      'calculateSasPin respects 4 and 6 digit counts and rejects others',
+      () {
+        final pin4 = SecurityManager.calculateSasPin(
           localPeerId: 'id1',
           localToken: 'tok1',
           remotePeerId: 'id2',
           remoteToken: 'tok2',
-          pinDigits: 0,
-        ),
-        throwsArgumentError,
-      );
+          pinDigits: 4,
+        );
+        expect(pin4.length, equals(4));
 
-      expect(
-        () => SecurityManager.calculateSasPin(
+        final pin6 = SecurityManager.calculateSasPin(
           localPeerId: 'id1',
           localToken: 'tok1',
           remotePeerId: 'id2',
           remoteToken: 'tok2',
-          pinDigits: 8,
-        ),
-        throwsArgumentError,
-      );
-    });
+          pinDigits: 6,
+        );
+        expect(pin6.length, equals(6));
+
+        expect(
+          () => SecurityManager.calculateSasPin(
+            localPeerId: 'id1',
+            localToken: 'tok1',
+            remotePeerId: 'id2',
+            remoteToken: 'tok2',
+            pinDigits: 0,
+          ),
+          throwsArgumentError,
+        );
+
+        expect(
+          () => SecurityManager.calculateSasPin(
+            localPeerId: 'id1',
+            localToken: 'tok1',
+            remotePeerId: 'id2',
+            remoteToken: 'tok2',
+            pinDigits: 8,
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
 
     test('deriveSessionKey produces 32-byte authenticated session key from DH shared secret', () {
       final aliceKeys = SecurityManager.generateKeyPair();

@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import '../models/nearby_options.dart';
 import '../models/peer.dart';
 import '../transport/ble_transport.dart';
@@ -49,7 +50,8 @@ class DiscoveryCoordinator {
     localPeerId = peerId;
     final strategy = options.strategy;
 
-    if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.mdnsOnly) {
+    if (strategy == DiscoveryStrategy.hybrid ||
+        strategy == DiscoveryStrategy.networkOnly) {
       await _bonsoir.startBroadcasting(
         serviceType: options.serviceId,
         peerId: peerId,
@@ -59,7 +61,8 @@ class DiscoveryCoordinator {
       );
     }
 
-    if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.bleOnly) {
+    if (strategy == DiscoveryStrategy.hybrid ||
+        strategy == DiscoveryStrategy.bleOnly) {
       await _ble.startAdvertising(
         peerId: peerId,
         displayName: displayName,
@@ -93,20 +96,22 @@ class DiscoveryCoordinator {
     final strategy = options.strategy;
 
     // Listen to mDNS discoveries
-    if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.mdnsOnly) {
+    if (strategy == DiscoveryStrategy.hybrid ||
+        strategy == DiscoveryStrategy.networkOnly) {
       _bonsoirFoundSub = _bonsoir.onPeerFound.listen((peer) {
         _handlePeerFound(peer, options);
       });
 
       _bonsoirLostSub = _bonsoir.onPeerLost.listen((peerId) {
-        _handlePeerMediumLost(peerId, DiscoveryMedium.mdns);
+        _handlePeerMediumLost(peerId, DiscoveryMedium.network);
       });
 
       await _bonsoir.startBrowsing(serviceType: options.serviceId);
     }
 
     // Listen to BLE discoveries
-    if (strategy == DiscoveryStrategy.hybrid || strategy == DiscoveryStrategy.bleOnly) {
+    if (strategy == DiscoveryStrategy.hybrid ||
+        strategy == DiscoveryStrategy.bleOnly) {
       _bleFoundSub = _ble.onPeerFound.listen((peer) {
         _handlePeerFound(peer, options);
       });
@@ -127,7 +132,7 @@ class DiscoveryCoordinator {
         final mediums = _peerActiveMediums[entry.key] ?? {};
         // Only prune peers whose active medium contains BLE and timed out
         if (mediums.contains(DiscoveryMedium.ble) &&
-            !mediums.contains(DiscoveryMedium.mdns) &&
+            !mediums.contains(DiscoveryMedium.network) &&
             now.difference(entry.value.lastSeen) > peerTimeout) {
           expiredPeerIds.add(entry.key);
         }
@@ -154,11 +159,16 @@ class DiscoveryCoordinator {
       }
     }
 
-    final mediums = _peerActiveMediums.putIfAbsent(incoming.id, () => <DiscoveryMedium>{});
+    final mediums = _peerActiveMediums.putIfAbsent(
+      incoming.id,
+      () => <DiscoveryMedium>{},
+    );
     mediums.add(incoming.discoveredVia);
 
     final existing = _discoveredPeers[incoming.id];
-    final mergedMedium = mediums.length > 1 ? DiscoveryMedium.hybrid : incoming.discoveredVia;
+    final mergedMedium = mediums.length > 1
+        ? DiscoveryMedium.hybrid
+        : incoming.discoveredVia;
 
     Peer updated;
     if (existing == null) {
@@ -167,7 +177,9 @@ class DiscoveryCoordinator {
       _peerDiscoveredController.add(updated);
     } else {
       updated = existing.copyWith(
-        displayName: incoming.displayName.isNotEmpty ? incoming.displayName : existing.displayName,
+        displayName: incoming.displayName.isNotEmpty
+            ? incoming.displayName
+            : existing.displayName,
         metadata: {...existing.metadata, ...incoming.metadata},
         discoveredVia: mergedMedium,
         ipAddress: incoming.ipAddress ?? existing.ipAddress,

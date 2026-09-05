@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:nearby/nearby.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+import 'broadcast_demo.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -113,7 +116,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
             _pendingConnections.remove(update.peer.id);
             if (_selectedPeerId == update.peer.id) {
               final remaining = _nearbyService.connectedPeers;
-              _selectedPeerId = remaining.isNotEmpty ? remaining.first.id : null;
+              _selectedPeerId = remaining.isNotEmpty
+                  ? remaining.first.id
+                  : null;
             }
           }
         });
@@ -141,7 +146,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       } else if (payload.type == PayloadType.file && payload.file != null) {
         if (mounted) {
           setState(() {
-            _chatMessages.add('📁 Received File: ${payload.fileName} (${payload.totalBytes} bytes)');
+            _chatMessages.add(
+              '📁 Received File: ${payload.fileName} (${payload.totalBytes} bytes)',
+            );
           });
           _scrollToBottom();
         }
@@ -194,9 +201,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
 
   Future<void> _requestPermissions() async {
     if (Platform.isIOS) {
-      await [
-        Permission.bluetooth,
-      ].request();
+      await [Permission.bluetooth].request();
     } else if (Platform.isAndroid) {
       await [
         Permission.bluetoothScan,
@@ -274,7 +279,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('Verification PIN: ', style: TextStyle(color: Colors.grey)),
+                  const Text(
+                    'Verification PIN: ',
+                    style: TextStyle(color: Colors.grey),
+                  ),
                   Text(
                     request.authenticationPin,
                     style: const TextStyle(
@@ -298,17 +306,28 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _nearbyService.rejectConnection(request.peer.id, reason: 'Declined by user');
+              _nearbyService.rejectConnection(
+                request.peer.id,
+                reason: 'Declined by user',
+              );
             },
-            child: const Text('Reject', style: TextStyle(color: Colors.redAccent)),
+            child: const Text(
+              'Reject',
+              style: TextStyle(color: Colors.redAccent),
+            ),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+            ),
             onPressed: () {
               Navigator.pop(ctx);
               _nearbyService.acceptConnection(request.peer.id);
             },
-            child: const Text('Accept & Connect', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Accept & Connect',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -325,7 +344,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       if (!success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Connection to ${peer.displayName} was declined or timed out.'),
+            content: Text(
+              'Connection to ${peer.displayName} was declined or timed out.',
+            ),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -366,7 +387,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
     if (_selectedPeerId == null || _documentsDir == null) return;
 
     final sampleFile = File('${_documentsDir!.path}/sample_photo.bin');
-    final sampleBytes = Uint8List.fromList(List.generate(256 * 1024, (i) => (i * 7) % 256));
+    final sampleBytes = Uint8List.fromList(
+      List.generate(256 * 1024, (i) => (i * 7) % 256),
+    );
     sampleFile.writeAsBytesSync(sampleBytes);
 
     await _nearbyService.sendFile(
@@ -399,7 +422,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       _sensorCounter = 0;
       _sensorTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
         _sensorCounter++;
-        final data = utf8.encode('Tick #$_sensorCounter (Sensors: X=${_sensorCounter % 10}, Y=${_sensorCounter * 2 % 100})');
+        final data = utf8.encode(
+          'Tick #$_sensorCounter (Sensors: X=${_sensorCounter % 10}, Y=${_sensorCounter * 2 % 100})',
+        );
         _activeSensorStream?.add(data);
       });
 
@@ -435,6 +460,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
         title: const Text('Nearby Cross-Platform Sync'),
         backgroundColor: const Color(0xFF1E1E2E),
         elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'Broadcast demo',
+            icon: const Icon(Icons.campaign_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const BroadcastDemoScreen(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -494,11 +530,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
               items: const [
                 DropdownMenuItem(
                   value: DiscoveryStrategy.hybrid,
-                  child: Text('Hybrid (mDNS + BLE)', overflow: TextOverflow.ellipsis),
+                  child: Text(
+                    'Hybrid (mDNS + BLE)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 DropdownMenuItem(
-                  value: DiscoveryStrategy.mdnsOnly,
-                  child: Text('mDNS Only (LAN / Wi-Fi)', overflow: TextOverflow.ellipsis),
+                  value: DiscoveryStrategy.networkOnly,
+                  child: Text(
+                    'mDNS Only (LAN / Wi-Fi)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 DropdownMenuItem(
                   value: DiscoveryStrategy.bleOnly,
@@ -521,11 +563,17 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
               items: const [
                 DropdownMenuItem(
                   value: SecurityMode.pinVerification,
-                  child: Text('PIN / SAS Verification (Recommended)', overflow: TextOverflow.ellipsis),
+                  child: Text(
+                    'PIN / SAS Verification (Recommended)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 DropdownMenuItem(
                   value: SecurityMode.autoAccept,
-                  child: Text('Auto-Accept (Insecure)', overflow: TextOverflow.ellipsis),
+                  child: Text(
+                    'Auto-Accept (Insecure)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
               onChanged: (val) {
@@ -541,7 +589,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       backgroundColor: _nearbyService.isAdvertising
                           ? Colors.redAccent
                           : const Color(0xFF6366F1),
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                        horizontal: 8,
+                      ),
                     ),
                     icon: Icon(
                       _nearbyService.isAdvertising
@@ -553,8 +604,13 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                     label: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        _nearbyService.isAdvertising ? 'Stop Advertising' : 'Start Advertising',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        _nearbyService.isAdvertising
+                            ? 'Stop Advertising'
+                            : 'Start Advertising',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     onPressed: _toggleAdvertising,
@@ -567,7 +623,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       backgroundColor: _nearbyService.isDiscovering
                           ? Colors.orangeAccent
                           : const Color(0xFF10B981),
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                        horizontal: 8,
+                      ),
                     ),
                     icon: Icon(
                       _nearbyService.isDiscovering ? Icons.stop : Icons.radar,
@@ -577,8 +636,13 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                     label: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        _nearbyService.isDiscovering ? 'Stop Discovery' : 'Start Discovery',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        _nearbyService.isDiscovering
+                            ? 'Stop Discovery'
+                            : 'Start Discovery',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     onPressed: _toggleDiscovery,
@@ -611,14 +675,20 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF282A36),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     '${_discoveredPeers.length} Found',
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -663,7 +733,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                           children: [
                             Text(
                               'Connecting to ${peer.displayName}...',
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -686,9 +758,12 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                       if (pin != null)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                            color: const Color(0xFF10B981)
+                                .withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: const Color(0xFF10B981)),
                           ),
@@ -724,7 +799,8 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: _discoveredPeers.length,
-                separatorBuilder: (_, _) => const Divider(color: Colors.white10),
+                separatorBuilder: (_, _) =>
+                    const Divider(color: Colors.white10),
                 itemBuilder: (ctx, idx) {
                   final peer = _discoveredPeers[idx];
                   return ListTile(
@@ -732,11 +808,11 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                     leading: CircleAvatar(
                       backgroundColor: const Color(0xFF6366F1),
                       child: Icon(
-                        peer.discoveredVia == DiscoveryMedium.mdns
+                        peer.discoveredVia == DiscoveryMedium.network
                             ? Icons.wifi
                             : (peer.discoveredVia == DiscoveryMedium.ble
-                                ? Icons.bluetooth
-                                : Icons.devices),
+                                  ? Icons.bluetooth
+                                  : Icons.devices),
                         color: Colors.white,
                       ),
                     ),
@@ -819,10 +895,7 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       icon: const SizedBox(
         width: 14,
         height: 14,
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          color: Colors.white70,
-        ),
+        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
       ),
       label: const Text(
         'Connecting...',
@@ -837,7 +910,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         title: const Text('Disconnect Peer'),
-        content: Text('Are you sure you want to disconnect from ${peer.displayName}?'),
+        content: Text(
+          'Are you sure you want to disconnect from ${peer.displayName}?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -846,7 +921,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Disconnect', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Disconnect',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -857,8 +935,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
       if (mounted) {
         setState(() {
           if (_selectedPeerId == peer.id) {
-            final remaining =
-                _nearbyService.connectedPeers.where((p) => p.id != peer.id).toList();
+            final remaining = _nearbyService.connectedPeers
+                .where((p) => p.id != peer.id)
+                .toList();
             _selectedPeerId = remaining.isNotEmpty ? remaining.first.id : null;
           }
         });
@@ -891,12 +970,20 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.redAccent,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                     ),
                     icon: const Icon(Icons.link_off, size: 16),
-                    label: const Text('Disconnect All', style: TextStyle(fontSize: 12)),
+                    label: const Text(
+                      'Disconnect All',
+                      style: TextStyle(fontSize: 12),
+                    ),
                     onPressed: () async {
-                      await _nearbyService.disconnectAll(reason: 'Disconnected all peers');
+                      await _nearbyService.disconnectAll(
+                        reason: 'Disconnected all peers',
+                      );
                       if (mounted) {
                         setState(() {
                           _selectedPeerId = null;
@@ -914,11 +1001,11 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 final isSelected = p.id == _selectedPeerId;
                 return InputChip(
                   avatar: Icon(
-                    p.discoveredVia == DiscoveryMedium.mdns
+                    p.discoveredVia == DiscoveryMedium.network
                         ? Icons.wifi
                         : (p.discoveredVia == DiscoveryMedium.ble
-                            ? Icons.bluetooth
-                            : Icons.devices),
+                              ? Icons.bluetooth
+                              : Icons.devices),
                     size: 16,
                     color: isSelected ? Colors.white : Colors.grey,
                   ),
@@ -926,7 +1013,9 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                     p.displayName,
                     style: TextStyle(
                       color: isSelected ? Colors.white : Colors.white70,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
                     ),
                   ),
                   selected: isSelected,
@@ -935,7 +1024,11 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                   onSelected: (selected) {
                     if (selected) setState(() => _selectedPeerId = p.id);
                   },
-                  deleteIcon: const Icon(Icons.close, size: 16, color: Colors.white70),
+                  deleteIcon: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Colors.white70,
+                  ),
                   deleteButtonTooltipMessage: 'Disconnect',
                   onDeleted: () => _disconnectPeer(p),
                 );
@@ -981,7 +1074,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                           const SizedBox(width: 8),
                           Text(
                             '${u.percentage}% (${u.bytesTransferred}/${u.totalBytes} B)',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
                           ),
                         ],
                       ),
@@ -1004,7 +1100,10 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 8,
+                      ),
                     ),
                     icon: const Icon(Icons.upload_file, size: 18),
                     label: const FittedBox(
@@ -1018,16 +1117,25 @@ class _NearbyHomeScreenState extends State<NearbyHomeScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 8,
+                      ),
                     ),
                     icon: Icon(
                       _activeSensorStream != null ? Icons.stop : Icons.sensors,
-                      color: _activeSensorStream != null ? Colors.redAccent : Colors.white,
+                      color: _activeSensorStream != null
+                          ? Colors.redAccent
+                          : Colors.white,
                       size: 18,
                     ),
                     label: FittedBox(
                       fit: BoxFit.scaleDown,
-                      child: Text(_activeSensorStream != null ? 'Stop Stream' : 'Live Stream'),
+                      child: Text(
+                        _activeSensorStream != null
+                            ? 'Stop Stream'
+                            : 'Live Stream',
+                      ),
                     ),
                     onPressed: _toggleLiveStream,
                   ),

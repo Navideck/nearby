@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nearby/nearby.dart';
 import 'package:nearby/src/discovery/ble_discovery.dart';
 import 'package:nearby/src/discovery/discovery_coordinator.dart';
+import 'package:universal_ble/universal_ble.dart';
+
+import 'broadcast_fakes.dart';
 
 class MockSessionTransport implements NearbyTransport {
   @override
@@ -183,6 +186,74 @@ void main() {
       expect(sessionB.state, equals(PeerConnectionState.disconnected));
     });
 
+    test('Matching pre-shared keys mutually authenticate the session', () async {
+      await sessionA.dispose();
+      await sessionB.dispose();
+      transportA = MockSessionTransport(peerId: peerB.id);
+      transportB = MockSessionTransport(peerId: peerA.id);
+      transportA.paired = transportB;
+      transportB.paired = transportA;
+      sessionA = NearbySession(
+        peer: peerB,
+        transport: transportA,
+        localPeerId: peerA.id,
+        localDisplayName: peerA.displayName,
+        payloadManager: payloadManagerA,
+        preSharedKey: 'correct horse battery staple',
+      );
+      sessionB = NearbySession(
+        peer: peerA,
+        transport: transportB,
+        localPeerId: peerB.id,
+        localDisplayName: peerB.displayName,
+        payloadManager: payloadManagerB,
+        preSharedKey: 'correct horse battery staple',
+      );
+
+      final handshake = sessionA.initiateHandshake();
+      await Future.delayed(const Duration(milliseconds: 30));
+      await sessionB.respondToHandshake(accept: true);
+
+      expect(await handshake, isTrue);
+      await Future.delayed(const Duration(milliseconds: 30));
+      expect(sessionA.state, PeerConnectionState.connected);
+      expect(sessionB.state, PeerConnectionState.connected);
+      expect(sessionA.sessionKey, sessionB.sessionKey);
+    });
+
+    test('Mismatched pre-shared keys reject the session', () async {
+      await sessionA.dispose();
+      await sessionB.dispose();
+      transportA = MockSessionTransport(peerId: peerB.id);
+      transportB = MockSessionTransport(peerId: peerA.id);
+      transportA.paired = transportB;
+      transportB.paired = transportA;
+      sessionA = NearbySession(
+        peer: peerB,
+        transport: transportA,
+        localPeerId: peerA.id,
+        localDisplayName: peerA.displayName,
+        payloadManager: payloadManagerA,
+        preSharedKey: 'wrong key',
+      );
+      sessionB = NearbySession(
+        peer: peerA,
+        transport: transportB,
+        localPeerId: peerB.id,
+        localDisplayName: peerB.displayName,
+        payloadManager: payloadManagerB,
+        preSharedKey: 'right key',
+      );
+
+      final handshake = sessionA.initiateHandshake();
+      await Future.delayed(const Duration(milliseconds: 30));
+      await sessionB.respondToHandshake(accept: true);
+
+      expect(await handshake, isFalse);
+      expect(sessionA.state, PeerConnectionState.disconnected);
+      expect(sessionB.state, isNot(PeerConnectionState.connected));
+    });
+
     test(
       'Transfers bidirectional byte payload across connected sessions',
       () async {
@@ -262,7 +333,7 @@ void main() {
     );
   });
 
-    group('DiscoveryCoordinator Tests', () {
+  group('DiscoveryCoordinator Tests', () {
     test(
       'Ignores self-discovery when incoming peer ID matches localPeerId',
       () {
@@ -302,17 +373,138 @@ void main() {
       expect(peerId, equals('8c17b5e43a9f1a2b'));
     });
 
-    test('Bounds long peer IDs to strictly 26 characters in compact fallback', () {
-      final longId = 'a' * 60;
-      final payload = BleDiscoveryService.createManufacturerPayload(
-        peerId: longId,
-        serviceId: 'nearby-service',
-      );
+    test(
+      'Bounds long peer IDs to strictly 26 characters in compact fallback',
+      () {
+        final longId = 'a' * 60;
+        final payload = BleDiscoveryService.createManufacturerPayload(
+          peerId: longId,
+          serviceId: 'nearby-service',
+        );
 
-      expect(payload.length, equals(27));
-      expect(payload.first, equals(0x01));
-      expect(payload.sublist(1).length, equals(26));
-      expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
-    });
+        expect(payload.length, equals(27));
+        expect(payload.first, equals(0x01));
+        expect(payload.sublist(1).length, equals(26));
+        expect(String.fromCharCodes(payload.sublist(1)), equals('a' * 26));
+      },
+    );
+
+    test(
+      'Filters out manufacturer advertisements lacking valid discovery payloads',
+      () async {
+        UniversalBle.setInstance(FakeCentral());
+        await BleScanDispatcher.instance.reset();
+
+        final ble = BleDiscoveryService();
+        final peers = <Peer>[];
+        final sub = ble.onPeerFound.listen(peers.add);
+
+        await ble.startScanning(serviceId: 'test-service');
+
+        // 1. Broadcast wire advertisement with 0xFFFF and raw binary payload (no GATT service)
+        BleScanDispatcher.instance.dispatchScanResultForTesting(
+          BleDevice(
+            deviceId: 'broadcast-dev',
+            name: 'Broadcast Device',
+            manufacturerDataList: [
+              ManufacturerData(
+                0xFFFF,
+                Uint8List.fromList([
+                  0xDE,
+                  0xAD,
+                  0xBE,
+                  0xEF,
+                  0x01,
+                  0x02,
+                  0x03,
+                  0x04,
+                ]),
+              ),
+            ],
+          ),
+        );
+        await pumpEventQueue();
+        expect(peers, isEmpty);
+
+        // 2. Valid JSON manufacturer payload (no GATT service)
+        final jsonPayload = BleDiscoveryService.createManufacturerPayload(
+          peerId: 'valid-peer-json',
+          serviceId: 'test-service',
+        );
+        BleScanDispatcher.instance.dispatchScanResultForTesting(
+          BleDevice(
+            deviceId: 'json-dev',
+            name: 'JSON Device',
+            manufacturerDataList: [ManufacturerData(0xFFFF, jsonPayload)],
+          ),
+        );
+        await pumpEventQueue();
+        expect(peers.length, 1);
+        expect(peers.first.id, 'valid-peer-json');
+
+        // 3. Valid compact 0x01 manufacturer payload (no GATT service)
+        final compactPayload = Uint8List.fromList([
+          0x01,
+          ...Uint8List.fromList('compact-peer'.codeUnits),
+        ]);
+        BleScanDispatcher.instance.dispatchScanResultForTesting(
+          BleDevice(
+            deviceId: 'compact-dev',
+            name: 'Compact Device',
+            manufacturerDataList: [ManufacturerData(0xFFFF, compactPayload)],
+          ),
+        );
+        await pumpEventQueue();
+        expect(peers.length, 2);
+        expect(peers.last.id, 'compact-peer');
+
+        await sub.cancel();
+        await ble.dispose();
+        await BleScanDispatcher.instance.reset();
+      },
+    );
+  });
+
+  group('NearbyService Broadcast Channel Integration Tests', () {
+    test(
+      'createBroadcastChannel creates and tracks managed channels',
+      () async {
+        final service = NearbyService(
+          localPeerId: 'test_node',
+          localDisplayName: 'Node 1',
+        );
+        expect(service.activeBroadcastChannels, isEmpty);
+
+        final channel = service.createBroadcastChannel(
+          const BroadcastChannelConfig(
+            channelId: 'custom-ch',
+            strategy: DiscoveryStrategy.hybrid,
+          ),
+        );
+
+        expect(service.activeBroadcastChannels.length, 1);
+        expect(service.activeBroadcastChannels.first, equals(channel));
+        expect(channel.config.channelId, equals('custom-ch'));
+
+        await service.dispose();
+        expect(service.activeBroadcastChannels, isEmpty);
+      },
+    );
+
+    test(
+      'defaultBroadcastChannel exposes convenience broadcast and stream',
+      () async {
+        final service = NearbyService(
+          localPeerId: 'test_node',
+          localDisplayName: 'Node 1',
+        );
+        final channel = service.defaultBroadcastChannel;
+        expect(channel, isNotNull);
+        expect(channel.config.channelId, equals('nearby-default'));
+        expect(service.onBroadcastReceived, isNotNull);
+
+        await service.dispose();
+      },
+    );
   });
 }

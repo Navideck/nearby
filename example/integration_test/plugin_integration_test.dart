@@ -5,14 +5,24 @@ import 'package:nearby/nearby.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('NearbyService initialization test', (WidgetTester tester) async {
+  testWidgets('Nearby connected and broadcast APIs initialize', (
+    WidgetTester tester,
+  ) async {
     final service = NearbyService(
       localPeerId: 'integration_test_peer',
       localDisplayName: 'Test Device',
     );
     expect(service.localPeerId, 'integration_test_peer');
-    expect(service.localDisplayName, 'Test Device');
     expect(service.isAdvertising, isFalse);
-    expect(service.isDiscovering, isFalse);
+
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(channelId: 'integration-test'),
+      senderId: 'integration-test-peer',
+    );
+    expect(channel.senderId, 'integration-test-peer');
+    expect(channel.isBroadcasting, isFalse);
+    expect(channel.isListening, isFalse);
+    await channel.dispose();
+    await service.dispose();
   });
 }
