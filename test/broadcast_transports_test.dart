@@ -9,6 +9,16 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'broadcast_fakes.dart';
 
+BroadcastChannel _createBleChannel({String channelId = 'a', String? senderId}) {
+  return BroadcastChannel(
+    config: BroadcastChannelConfig(
+      channelId: channelId,
+      strategy: DiscoveryStrategy.bleOnly,
+    ),
+    senderId: senderId,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late FakeCentral central;
@@ -54,13 +64,7 @@ void main() {
   ]) {
     test('correct legacy advertising carrier on $platform', () async {
       debugDefaultTargetPlatformOverride = platform;
-      final channel = BroadcastChannel(
-        config: const BroadcastChannelConfig(
-          channelId: 'a',
-          strategy: DiscoveryStrategy.bleOnly,
-        ),
-        senderId: 'sender',
-      );
+      final channel = _createBleChannel(senderId: 'sender');
       final data = Uint8List(10);
       await channel.send(data);
       expect(peripheral.services, isEmpty);
@@ -81,12 +85,7 @@ void main() {
   }
 
   test('receive normalized identity/data and native timestamp, reject other channels', () async {
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     final received = <BroadcastPacket>[];
     final sub = channel.stream.listen(received.add);
     await channel.startListening();
@@ -212,12 +211,7 @@ void main() {
     'stop during in-flight BLE send prevents advertising from leaking',
     () async {
       peripheral.gate = Completer<void>();
-      final channel = BroadcastChannel(
-        config: const BroadcastChannelConfig(
-          channelId: 'a',
-          strategy: DiscoveryStrategy.bleOnly,
-        ),
-      );
+      final channel = _createBleChannel();
       final send = channel.send(Uint8List(10));
       await pumpEventQueue();
       final stop = channel.stopBroadcasting();
@@ -233,12 +227,7 @@ void main() {
 
   test('recovers gracefully when Bluetooth transitions from off to ready', () async {
     peripheral.readiness = PeripheralReadinessState.bluetoothOff;
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     await channel.send(Uint8List(10));
     expect(peripheral.starts, 0);
 
@@ -250,12 +239,7 @@ void main() {
 
   test('recovers when permission transitions from unauthorized to ready', () async {
     peripheral.readiness = PeripheralReadinessState.unauthorized;
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     final errors = <BroadcastFailure>[];
     final sub = channel.errors.listen(errors.add);
     await channel.send(Uint8List(10));
@@ -274,12 +258,7 @@ void main() {
   test('unsupported readiness on non-Android latches ble unavailable', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     peripheral.readiness = PeripheralReadinessState.unsupported;
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     await channel.send(Uint8List(10));
     expect(peripheral.starts, 0);
 
@@ -292,12 +271,7 @@ void main() {
   test('unsupported readiness on Android still attempts advertising', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     peripheral.readiness = PeripheralReadinessState.unsupported;
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     await channel.send(Uint8List(10));
     expect(peripheral.starts, 1);
     await channel.dispose();
@@ -306,12 +280,7 @@ void main() {
   test('Android prompts to enable bluetooth at most once when bluetooth is off', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     peripheral.readiness = PeripheralReadinessState.bluetoothOff;
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     for (var i = 0; i < 10; i++) {
       await channel.send(Uint8List(10));
     }
@@ -334,12 +303,7 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     peripheral.readiness = PeripheralReadinessState.unsupported;
     peripheral.failStartAdvertising = Exception('Bluetooth is not enabled');
-    final channel = BroadcastChannel(
-      config: const BroadcastChannelConfig(
-        channelId: 'a',
-        strategy: DiscoveryStrategy.bleOnly,
-      ),
-    );
+    final channel = _createBleChannel();
     for (var i = 0; i < 5; i++) {
       await channel.send(Uint8List(10));
     }
