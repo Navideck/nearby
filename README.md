@@ -178,13 +178,13 @@ nearby.connectionRequestsStream.listen((request) {
 #### D. Transfer Bytes, Files, or Streams
 ```dart
 // 1. Send byte message
-await nearby.sendBytes(peerId, Uint8List.fromList(utf8.encode('Take 1 Action!')));
+await nearby.sendBytes(peerId, Uint8List.fromList(utf8.encode('Hello Nearby Peer!')));
 
 // 2. Send file with progress tracking
 nearby.payloadProgressStream.listen((update) {
   print('Transfer #${update.payloadId}: ${update.percentage}%');
 });
-await nearby.sendFile(peerId, File('/path/to/script.pdf'));
+await nearby.sendFile(peerId, File('/path/to/document.pdf'));
 
 // 3. Pipe live byte stream
 final streamController = StreamController<List<int>>();
@@ -233,7 +233,7 @@ Scans are shared across Nearby listeners without overwriting `UniversalBle.onSca
 // Create a dedicated channel
 final channel = nearby.createBroadcastChannel(
   const BroadcastChannelConfig(
-    channelId: 'navideck-tc',
+    channelId: 'custom-channel',
     strategy: DiscoveryStrategy.hybrid,
     multicastAddress: '239.255.0.1',
     multicastPort: 9876,
@@ -249,7 +249,7 @@ channel.stream.listen((packet) {
 
 // Broadcast datagrams to all nearby devices
 await channel.startBroadcasting();
-await channel.send(Uint8List.fromList([0x01, 0x02, 0x03, 0x04]), localName: 'Slate-Master');
+await channel.send(Uint8List.fromList([0x01, 0x02, 0x03, 0x04]), localName: 'Sender-Node');
 
 // Network-only control packets keep Nearby framing but are not advertised over BLE.
 await channel.sendNetwork(Uint8List.fromList([0x05, 0x06]));
