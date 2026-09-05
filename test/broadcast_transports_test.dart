@@ -329,4 +329,22 @@ void main() {
     expect(central.enableBluetoothCalls, 2);
     await channel.dispose();
   });
+
+  test('Android triggers enable bluetooth when startAdvertising throws not enabled', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    peripheral.readiness = PeripheralReadinessState.unsupported;
+    peripheral.failStartAdvertising = Exception('Bluetooth is not enabled');
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'a',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await channel.send(Uint8List(10));
+    }
+    expect(peripheral.starts, 1);
+    expect(central.enableBluetoothCalls, 1);
+    await channel.dispose();
+  });
 }

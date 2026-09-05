@@ -80,6 +80,14 @@ class BroadcastChannel {
     if (!_errors.isClosed) _errors.add(BroadcastFailure(medium, error));
   }
 
+  void _promptEnableBluetoothIfNeeded() {
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        !_bluetoothEnablePrompted) {
+      _bluetoothEnablePrompted = true;
+      unawaited(UniversalBle.enableBluetooth().catchError((_) => false));
+    }
+  }
+
   Future<void> startBroadcasting() async {
     if (_disposed) throw StateError('BroadcastChannel is disposed');
     if (_isBroadcasting) return _startingBroadcast;
@@ -178,11 +186,8 @@ class BroadcastChannel {
       if (readiness == PeripheralReadinessState.bluetoothOff ||
           readiness == PeripheralReadinessState.unknown) {
         _bleAdvertising = false;
-        if (readiness == PeripheralReadinessState.bluetoothOff &&
-            defaultTargetPlatform == TargetPlatform.android &&
-            !_bluetoothEnablePrompted) {
-          _bluetoothEnablePrompted = true;
-unawaited(UniversalBle.enableBluetooth().catchError((_) => false));
+        if (readiness == PeripheralReadinessState.bluetoothOff) {
+          _promptEnableBluetoothIfNeeded();
         }
         return;
       }
@@ -226,7 +231,7 @@ unawaited(UniversalBle.enableBluetooth().catchError((_) => false));
       } else if (e.toString().contains('Bluetooth is not enabled') ||
           e.toString().contains('bluetoothOff')) {
         _bleAdvertising = false;
-        _bluetoothEnablePrompted = true;
+        _promptEnableBluetoothIfNeeded();
       }
       _fail(DiscoveryMedium.ble, e);
     }

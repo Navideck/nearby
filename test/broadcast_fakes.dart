@@ -46,6 +46,7 @@ class FakePeripheral extends Fake implements UniversalBlePeripheralPlatform {
   ManufacturerData? manufacturer;
   int starts = 0, stops = 0;
   Completer<void>? gate;
+  Object? failStartAdvertising;
   @override
   Stream<BlePeripheralAdvertisingStateChanged> get advertisingStateStream =>
       events.stream;
@@ -60,6 +61,7 @@ class FakePeripheral extends Fake implements UniversalBlePeripheralPlatform {
     PeripheralPlatformConfig? platformConfig,
   }) async {
     starts++;
+    if (failStartAdvertising != null) throw failStartAdvertising!;
     this.services = services;
     name = localName;
     manufacturer = manufacturerData;
