@@ -230,4 +230,76 @@ void main() {
       await channel.dispose();
     },
   );
+
+  test('recovers gracefully when Bluetooth transitions from off to ready', () async {
+    peripheral.readiness = PeripheralReadinessState.bluetoothOff;
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'a',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 0);
+
+    peripheral.readiness = PeripheralReadinessState.ready;
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 1);
+    await channel.dispose();
+  });
+
+  test('recovers when permission transitions from unauthorized to ready', () async {
+    peripheral.readiness = PeripheralReadinessState.unauthorized;
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'a',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    final errors = <BroadcastFailure>[];
+    final sub = channel.errors.listen(errors.add);
+    await channel.send(Uint8List(10));
+    await pumpEventQueue();
+    expect(errors.length, 1);
+    expect(errors.first.medium, DiscoveryMedium.ble);
+    expect(peripheral.starts, 0);
+
+    peripheral.readiness = PeripheralReadinessState.ready;
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 1);
+    await sub.cancel();
+    await channel.dispose();
+  });
+
+  test('unsupported readiness on non-Android latches ble unavailable', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    peripheral.readiness = PeripheralReadinessState.unsupported;
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'a',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 0);
+
+    peripheral.readiness = PeripheralReadinessState.ready;
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 0);
+    await channel.dispose();
+  });
+
+  test('unsupported readiness on Android still attempts advertising', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    peripheral.readiness = PeripheralReadinessState.unsupported;
+    final channel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'a',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    await channel.send(Uint8List(10));
+    expect(peripheral.starts, 1);
+    await channel.dispose();
+  });
 }

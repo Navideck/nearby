@@ -173,12 +173,22 @@ class BroadcastChannel {
       final name = _wire.localName(bytes);
       final readiness = await UniversalBlePeripheral.getAvailabilityState();
       if (!_isBroadcasting) return;
-      if (readiness == PeripheralReadinessState.unsupported ||
-          readiness == PeripheralReadinessState.unauthorized) {
-        _bleUnavailable = true;
+      if (readiness == PeripheralReadinessState.bluetoothOff ||
+          readiness == PeripheralReadinessState.unknown) {
+        _bleAdvertising = false;
+        return;
+      }
+      if (readiness == PeripheralReadinessState.unauthorized) {
         throw StateError('BLE advertising $readiness');
       }
-      if (readiness != PeripheralReadinessState.ready) return;
+      if (readiness == PeripheralReadinessState.unsupported) {
+        if (defaultTargetPlatform != TargetPlatform.android) {
+          _bleUnavailable = true;
+          throw StateError('BLE advertising $readiness');
+        }
+      } else {
+        _bleUnavailable = false;
+      }
       if (_bleAdvertising) await UniversalBlePeripheral.stopAdvertising();
       _bleAdvertising = false;
       if (!_isBroadcasting) return;
@@ -199,6 +209,11 @@ class BroadcastChannel {
       );
       _bleAdvertising = true;
     } catch (e) {
+      if (e is StateError && e.message.contains('unsupported')) {
+        _bleUnavailable = true;
+      } else if (e.toString().contains('not supported')) {
+        _bleUnavailable = true;
+      }
       _fail(DiscoveryMedium.ble, e);
     }
   }
