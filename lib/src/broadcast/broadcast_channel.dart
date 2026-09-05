@@ -182,7 +182,7 @@ class BroadcastChannel {
             defaultTargetPlatform == TargetPlatform.android &&
             !_bluetoothEnablePrompted) {
           _bluetoothEnablePrompted = true;
-          UniversalBle.enableBluetooth().catchError((_) => false);
+unawaited(UniversalBle.enableBluetooth().catchError((_) => false));
         }
         return;
       }
