@@ -182,7 +182,8 @@ class MulticastTransport {
   }
 
   /// Returns true if at least one non-loopback IPv4 network interface is available
-  /// for multicast transmission (excluding non-multicast cellular interfaces).
+  /// for multicast transmission (excluding common cellular interface names such as
+  /// rmnet, pdp_ip, and ccmni).
   static Future<bool> isNetworkAvailable() async {
     try {
       final interfaces = await NetworkInterface.list(

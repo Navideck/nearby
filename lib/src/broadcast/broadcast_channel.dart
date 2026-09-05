@@ -77,7 +77,8 @@ class BroadcastChannel {
   bool get _networkEnabled => config.strategy != DiscoveryStrategy.bleOnly;
   bool get _bleEnabled => config.strategy != DiscoveryStrategy.networkOnly;
 
-  /// Returns true if at least one non-loopback network interface is available for multicast.
+  /// Returns true if at least one non-loopback IPv4 network interface is available
+  /// for multicast transmission (excluding common cellular interface names).
   static Future<bool> isNetworkAvailable() =>
       MulticastTransport.isNetworkAvailable();
 
@@ -227,6 +228,7 @@ class BroadcastChannel {
       case PeripheralReadinessState.unauthorized:
         throw StateError('BLE advertising $readiness');
       case PeripheralReadinessState.unsupported:
+        _bleAdvertising = false;
         if (defaultTargetPlatform != TargetPlatform.android) {
           _bleUnavailable = true;
           throw StateError('BLE advertising $readiness');
@@ -236,12 +238,14 @@ class BroadcastChannel {
   }
 
   void _handleBleSendError(Object error) {
-    final message = error.toString();
-    if ((error is StateError && error.message.contains('unsupported')) ||
-        message.contains('not supported')) {
+    final message = error.toString().toLowerCase();
+    final stateMessage = error is StateError ? error.message.toLowerCase() : '';
+    if (stateMessage.contains('unsupported') ||
+        message.contains('not supported') ||
+        message.contains('unsupported')) {
       _bleUnavailable = true;
-    } else if (message.contains('Bluetooth is not enabled') ||
-        message.contains('bluetoothOff')) {
+    } else if (message.contains('bluetooth is not enabled') ||
+        message.contains('bluetoothoff')) {
       _bleAdvertising = false;
       _promptEnableBluetoothIfNeeded();
     }
