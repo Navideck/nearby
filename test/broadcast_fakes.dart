@@ -6,7 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 class FakeCentral extends Fake implements UniversalBlePlatform {
   final packets = StreamController<BleDevice>.broadcast(sync: true);
   bool scanning = false, failScan = false;
-  int starts = 0, stops = 0;
+  int starts = 0, stops = 0, enableBluetoothCalls = 0;
   OnScanResult? callback;
   @override
   Stream<BleDevice> get scanStream => packets.stream;
@@ -29,6 +29,12 @@ class FakeCentral extends Fake implements UniversalBlePlatform {
     stops++;
     scanning = false;
   }
+
+  @override
+  Future<bool> enableBluetooth() async {
+    enableBluetoothCalls++;
+    return true;
+  }
 }
 
 class FakePeripheral extends Fake implements UniversalBlePeripheralPlatform {
@@ -40,6 +46,7 @@ class FakePeripheral extends Fake implements UniversalBlePeripheralPlatform {
   ManufacturerData? manufacturer;
   int starts = 0, stops = 0;
   Completer<void>? gate;
+  Object? failStartAdvertising;
   @override
   Stream<BlePeripheralAdvertisingStateChanged> get advertisingStateStream =>
       events.stream;
@@ -54,6 +61,7 @@ class FakePeripheral extends Fake implements UniversalBlePeripheralPlatform {
     PeripheralPlatformConfig? platformConfig,
   }) async {
     starts++;
+    if (failStartAdvertising != null) throw failStartAdvertising!;
     this.services = services;
     name = localName;
     manufacturer = manufacturerData;
