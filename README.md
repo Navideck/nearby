@@ -85,13 +85,11 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 <string>Used to discover and connect to nearby peers over Wi-Fi and local network.</string>
 <key>NSBonjourServices</key>
 <array>
-    <!-- Declare each service type: _<serviceId>._tcp -->
-    <string>_production-set._tcp</string>
     <string>_nearby-app._tcp</string>
 </array>
 ```
 
-> **Note**: Apple platforms (iOS 14+, macOS 11+) require declaring each Bonjour service type in `NSBonjourServices` formatted as `_<serviceId>._tcp`. The declared service must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions` (e.g. `production-set` requires `_production-set._tcp`).
+> **Note**: Apple platforms (iOS 14+, macOS 11+) require declaring each Bonjour service type in `NSBonjourServices` formatted as `_<serviceId>._tcp`. The declared service must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions` (e.g. `nearby-app` requires `_nearby-app._tcp`).
 
 ### macOS Entitlements (`macos/Runner/*.entitlements`)
 
@@ -130,7 +128,7 @@ final nearby = NearbyService(
 ```dart
 await nearby.startAdvertising(
   options: AdvertisingOptions(
-    serviceId: 'production-set',
+    serviceId: 'nearby-app',
     strategy: DiscoveryStrategy.hybrid,
     securityMode: SecurityMode.preSharedKey,
     preSharedKey: configuredSecret,
@@ -149,7 +147,7 @@ nearby.discoveredPeersStream.listen((peers) {
 
 await nearby.startDiscovery(
   options: const DiscoveryOptions(
-    serviceId: 'production-set',
+    serviceId: 'nearby-app',
     strategy: DiscoveryStrategy.hybrid,
   ),
 );
