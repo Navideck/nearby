@@ -77,6 +77,37 @@ class BroadcastChannel {
   bool get _networkEnabled => config.strategy != DiscoveryStrategy.bleOnly;
   bool get _bleEnabled => config.strategy != DiscoveryStrategy.networkOnly;
 
+  /// Returns true if at least one non-loopback network interface is available for multicast.
+  static Future<bool> isNetworkAvailable() =>
+      MulticastTransport.isNetworkAvailable();
+
+  /// Returns true if BLE peripheral advertising is ready.
+  static Future<bool> isBleAvailable() async {
+    try {
+      final readiness = await UniversalBlePeripheral.getAvailabilityState();
+      return readiness == PeripheralReadinessState.ready;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Checks whether at least one configured transport (Network or BLE) is available.
+  Future<bool> hasAvailableTransport({
+    Future<bool> Function()? isNetworkAvailable,
+    Future<bool> Function()? isBleAvailable,
+  }) async {
+    if (_networkEnabled &&
+        await (isNetworkAvailable?.call() ??
+            BroadcastChannel.isNetworkAvailable())) {
+      return true;
+    }
+    if (_bleEnabled &&
+        await (isBleAvailable?.call() ?? BroadcastChannel.isBleAvailable())) {
+      return true;
+    }
+    return false;
+  }
+
   void _fail(DiscoveryMedium medium, Object error) {
     if (!_errors.isClosed) _errors.add(BroadcastFailure(medium, error));
   }

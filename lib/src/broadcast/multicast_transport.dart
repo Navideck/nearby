@@ -180,4 +180,24 @@ class MulticastTransport {
       _refresh = null;
     }
   }
+
+  /// Returns true if at least one non-loopback IPv4 network interface is available
+  /// for multicast transmission (excluding non-multicast cellular interfaces).
+  static Future<bool> isNetworkAvailable() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      return interfaces.any((i) {
+        final name = i.name.toLowerCase();
+        return !name.startsWith('rmnet') &&
+            !name.startsWith('ccmni') &&
+            !name.startsWith('pdp_ip') &&
+            !name.startsWith('dummy');
+      });
+    } catch (_) {
+      return false;
+    }
+  }
 }
