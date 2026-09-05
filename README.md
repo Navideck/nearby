@@ -114,9 +114,9 @@ Enable network client/server and Bluetooth in **both** `DebugProfile.entitlement
 import 'package:nearby/nearby.dart';
 
 final nearby = NearbyService(
-  localDisplayName: 'Camera A',
+  localDisplayName: 'Device A',
   // Optional: persistent peer ID across restarts (random hex ID by default)
-  localPeerId: 'camera-node-01',
+  localPeerId: 'device-node-01',
 );
 ```
 

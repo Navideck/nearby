@@ -22,16 +22,16 @@ void main() {
         data: data,
         senderId: 'device-123',
         medium: DiscoveryMedium.ble,
-        deviceName: 'Camera A',
+        deviceName: 'Device A',
         rssi: -45,
       );
 
       expect(packet.data, data);
       expect(packet.senderId, 'device-123');
       expect(packet.medium, DiscoveryMedium.ble);
-      expect(packet.deviceName, 'Camera A');
+      expect(packet.deviceName, 'Device A');
       expect(packet.rssi, -45);
-      expect(packet.toString(), contains('Camera A'));
+      expect(packet.toString(), contains('Device A'));
     });
 
     test('BroadcastChannel lifecycle start and stop without errors', () async {

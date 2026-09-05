@@ -165,7 +165,7 @@ void main() {
     final sender = BroadcastChannel(
       config: config,
       senderId: 'persistent',
-      displayName: 'Camera A',
+      displayName: 'Device A',
     );
     final result = receiver.stream.first.timeout(const Duration(seconds: 3));
     await receiver.startListening();
@@ -176,7 +176,7 @@ void main() {
     final packet = await result;
     expect(packet.senderId, BroadcastChannel.fingerprint('persistent'));
     expect(packet.fullSenderId, 'persistent');
-    expect(packet.deviceName, 'Camera A');
+    expect(packet.deviceName, 'Device A');
     expect(packet.address, isNotNull);
     expect(packet.attributes, {'clock': '1234'});
     await sender.dispose();
