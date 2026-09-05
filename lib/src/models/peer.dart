@@ -114,10 +114,12 @@ class Peer {
             (k, v) => MapEntry(k.toString(), v.toString()),
           ) ??
           const {},
-      discoveredVia: DiscoveryMedium.values.firstWhere(
-        (m) => m.name == json['discoveredVia'],
-        orElse: () => DiscoveryMedium.network,
-      ),
+      discoveredVia: json['discoveredVia'] == 'mdns'
+          ? DiscoveryMedium.network
+          : DiscoveryMedium.values.firstWhere(
+              (m) => m.name == json['discoveredVia'],
+              orElse: () => DiscoveryMedium.network,
+            ),
       ipAddress: json['ipAddress'] as String?,
       port: json['port'] as int?,
       bleDeviceId: json['bleDeviceId'] as String?,

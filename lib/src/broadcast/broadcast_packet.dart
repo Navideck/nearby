@@ -1,7 +1,14 @@
 import 'dart:typed_data';
 
 /// Transport that discovered a peer or delivered a broadcast packet.
-enum DiscoveryMedium { network, ble, hybrid }
+enum DiscoveryMedium {
+  network,
+  ble,
+  hybrid;
+
+  @Deprecated('Use DiscoveryMedium.network instead')
+  static const DiscoveryMedium mdns = DiscoveryMedium.network;
+}
 
 /// A connectionless broadcast packet received over BLE advertisement or UDP multicast.
 class BroadcastPacket {

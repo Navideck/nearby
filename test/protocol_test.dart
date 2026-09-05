@@ -191,10 +191,18 @@ void main() {
         );
 
         final authBytes = frame.toBytes(sessionKey: key);
-        // Tamper with body byte and recompute CRC32 to bypass simple checksum
-        authBytes[20] = 0xAA;
-        final newCrc = Crc32.compute(authBytes.sublist(0, 25));
-        ByteData.sublistView(authBytes).setUint32(25, newCrc, Endian.big);
+        final encodedBodyLength = ByteData.sublistView(
+          authBytes,
+        ).getUint32(16, Endian.big);
+        final crcOffset = 20 + encodedBodyLength;
+
+        // Tamper with encrypted body byte and recompute CRC32 to bypass simple checksum
+        authBytes[20] ^= 0xFF;
+        final newCrc = Crc32.compute(authBytes.sublist(0, crcOffset));
+        ByteData.sublistView(authBytes).setUint32(crcOffset, newCrc, Endian.big);
+
+        // CRC32 passes when parsed without key
+        expect(PacketFrame.fromBytes(authBytes), isNotNull);
 
         // CRC32 passes, but HMAC verification MUST fail and reject the packet
         final parsed = PacketFrame.fromBytes(authBytes, sessionKey: key);

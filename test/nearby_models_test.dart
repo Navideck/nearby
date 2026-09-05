@@ -198,5 +198,19 @@ void main() {
       expect(req.authenticationPin, equals('4819'));
       expect(req.metadata['role'], equals('player'));
     });
+
+    test('Deprecated mdns aliases retain backwards compatibility', () {
+      // ignore: deprecated_member_use_from_same_package
+      expect(DiscoveryMedium.mdns, equals(DiscoveryMedium.network));
+      // ignore: deprecated_member_use_from_same_package
+      expect(DiscoveryStrategy.mdnsOnly, equals(DiscoveryStrategy.networkOnly));
+
+      final peerFromLegacyJson = Peer.fromJson({
+        'id': 'legacy_node',
+        'displayName': 'Legacy Device',
+        'discoveredVia': 'mdns',
+      });
+      expect(peerFromLegacyJson.discoveredVia, equals(DiscoveryMedium.network));
+    });
   });
 }

@@ -10,7 +10,14 @@ import 'broadcast_wire.dart';
 import 'multicast_transport.dart';
 
 /// Transports used by a broadcast channel.
-enum DiscoveryStrategy { hybrid, networkOnly, bleOnly }
+enum DiscoveryStrategy {
+  hybrid,
+  networkOnly,
+  bleOnly;
+
+  @Deprecated('Use DiscoveryStrategy.networkOnly instead')
+  static const DiscoveryStrategy mdnsOnly = DiscoveryStrategy.networkOnly;
+}
 
 class BroadcastChannelConfig {
   final String channelId;

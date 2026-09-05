@@ -63,5 +63,60 @@ void main() {
         expect(dispatcher.isScanning, isFalse);
       },
     );
+
+    test('suspendScan and resumeScan coordinate native scan state', () async {
+      final received = <BleDevice>[];
+      void callback(BleDevice device) => received.add(device);
+
+      await dispatcher.addListener(callback);
+      expect(dispatcher.isScanning, isTrue);
+      expect(await UniversalBle.isScanning(), isTrue);
+
+      // Suspend scan
+      await dispatcher.suspendScan();
+      expect(dispatcher.isScanning, isFalse);
+      expect(await UniversalBle.isScanning(), isFalse);
+      expect(dispatcher.listenerCount, 1);
+
+      // Adding a listener while suspended registers callback without starting native scan
+      void callback2(BleDevice device) {}
+      await dispatcher.addListener(callback2);
+      expect(dispatcher.listenerCount, 2);
+      expect(dispatcher.isScanning, isFalse);
+      expect(await UniversalBle.isScanning(), isFalse);
+
+      // Resume scan
+      await dispatcher.resumeScan();
+      expect(dispatcher.isScanning, isTrue);
+      expect(await UniversalBle.isScanning(), isTrue);
+
+      final mockDevice = BleDevice(deviceId: 'd1', name: 'Test Device');
+      dispatcher.dispatchScanResultForTesting(mockDevice);
+      expect(received.length, 1);
+
+      await dispatcher.removeListener(callback);
+      await dispatcher.removeListener(callback2);
+      expect(dispatcher.isScanning, isFalse);
+      expect(await UniversalBle.isScanning(), isFalse);
+    });
+
+    test('restarts native scan when addListener is called after scan stopped', () async {
+      void callback1(BleDevice _) {}
+      await dispatcher.addListener(callback1);
+      expect(await UniversalBle.isScanning(), isTrue);
+
+      // Native scan stopped out-of-band (e.g. direct stopScan)
+      await UniversalBle.stopScan();
+      expect(await UniversalBle.isScanning(), isFalse);
+
+      // addListener detects stopped scan and restarts it
+      void callback2(BleDevice _) {}
+      await dispatcher.addListener(callback2);
+      expect(await UniversalBle.isScanning(), isTrue);
+      expect(dispatcher.isScanning, isTrue);
+
+      await dispatcher.removeListener(callback1);
+      await dispatcher.removeListener(callback2);
+    });
   });
 }

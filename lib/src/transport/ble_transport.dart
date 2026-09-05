@@ -7,6 +7,7 @@ import 'package:universal_ble/universal_ble.dart';
 import '../protocol/packet_framer.dart';
 import 'ble/ble_chunk_sender.dart';
 import 'ble/ble_constants.dart';
+import 'ble/ble_scan_dispatcher.dart';
 import 'ble/ble_transport_registry.dart';
 import 'transport.dart';
 
@@ -48,74 +49,75 @@ class BleTransport implements NearbyTransport {
   }) async {
     final targetServiceUuid = serviceUuid ?? kNearbyBleServiceUuid;
 
-    // 1. Explicitly stop BLE scanning before connecting to prevent Android GATT error 133
+    // 1. Explicitly suspend BLE scanning before connecting to prevent Android GATT error 133
+    await BleScanDispatcher.instance.suspendScan();
     try {
-      await UniversalBle.stopScan();
-    } catch (_) {}
+      // 2. Connect with overall deadline retry
+      final deadline = DateTime.now().add(timeout);
+      int attempts = 0;
+      while (true) {
+        attempts++;
+        final remaining = deadline.difference(DateTime.now());
+        if (remaining <= Duration.zero) {
+          throw TimeoutException('BLE connect timed out after $timeout', timeout);
+        }
+        try {
+          final connectRemaining = deadline.difference(DateTime.now());
+          if (connectRemaining <= Duration.zero) {
+            throw TimeoutException(
+              'BLE connect timed out after $timeout',
+              timeout,
+            );
+          }
 
-    // 2. Connect with overall deadline retry
-    final deadline = DateTime.now().add(timeout);
-    int attempts = 0;
-    while (true) {
-      attempts++;
-      final remaining = deadline.difference(DateTime.now());
-      if (remaining <= Duration.zero) {
-        throw TimeoutException('BLE connect timed out after $timeout', timeout);
+          await UniversalBle.connect(deviceId).timeout(connectRemaining);
+          break;
+        } catch (e) {
+          if (attempts >= 3 ||
+              deadline.difference(DateTime.now()) <= Duration.zero) {
+            rethrow;
+          }
+          await UniversalBle.disconnect(deviceId);
+        }
       }
+
+      // 3. Register active transport instance ONLY after connection is established
+      final transport = BleTransport._(deviceId, peerId, targetServiceUuid);
+
       try {
-        final connectRemaining = deadline.difference(DateTime.now());
-        if (connectRemaining <= Duration.zero) {
-          throw TimeoutException(
-            'BLE connect timed out after $timeout',
-            timeout,
-          );
-        }
+        // Discover services
+        await UniversalBle.discoverServices(deviceId);
 
-        await UniversalBle.connect(deviceId).timeout(connectRemaining);
-        break;
-      } catch (e) {
-        if (attempts >= 3 ||
-            deadline.difference(DateTime.now()) <= Duration.zero) {
-          rethrow;
-        }
-        await UniversalBle.disconnect(deviceId);
-      }
-    }
-
-    // 3. Register active transport instance ONLY after connection is established
-    final transport = BleTransport._(deviceId, peerId, targetServiceUuid);
-
-    try {
-      // Discover services
-      await UniversalBle.discoverServices(deviceId);
-
-      // Subscribe to RX characteristic notifications
-      await UniversalBle.subscribeNotifications(
-        deviceId,
-        targetServiceUuid,
-        kNearbyBleRxCharUuid,
-      );
-
-      // Request MTU if possible
-      try {
-        final negotiatedMtu = await UniversalBle.requestMtu(deviceId, 512);
-        if (negotiatedMtu >= kBleMinMtu) {
-          transport._mtu = min(negotiatedMtu - 3, kBleMaxChunkSize);
-        }
-      } catch (_) {}
-
-      // Request high performance connection priority on Android if possible
-      try {
-        await UniversalBle.requestConnectionPriority(
+        // Subscribe to RX characteristic notifications
+        await UniversalBle.subscribeNotifications(
           deviceId,
-          BleConnectionPriority.highPerformance,
+          targetServiceUuid,
+          kNearbyBleRxCharUuid,
         );
-      } catch (_) {}
 
-      return transport;
-    } catch (e) {
-      await transport.close();
-      rethrow;
+        // Request MTU if possible
+        try {
+          final negotiatedMtu = await UniversalBle.requestMtu(deviceId, 512);
+          if (negotiatedMtu >= kBleMinMtu) {
+            transport._mtu = min(negotiatedMtu - 3, kBleMaxChunkSize);
+          }
+        } catch (_) {}
+
+        // Request high performance connection priority on Android if possible
+        try {
+          await UniversalBle.requestConnectionPriority(
+            deviceId,
+            BleConnectionPriority.highPerformance,
+          );
+        } catch (_) {}
+
+        return transport;
+      } catch (e) {
+        await transport.close();
+        rethrow;
+      }
+    } finally {
+      await BleScanDispatcher.instance.resumeScan();
     }
   }
 

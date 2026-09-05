@@ -69,33 +69,46 @@ class BleDiscoveryService {
     String? peerId;
     String? advertisedSid;
     Map<String, String> metadata = const {};
+    bool hasValidDiscoveryPayload = false;
     final mfgList = device.manufacturerDataList;
     if (mfgList.isNotEmpty) {
       for (final mfg in mfgList) {
-        if (mfg.payload.isNotEmpty) {
+        if (mfg.companyId == 0xFFFF && mfg.payload.isNotEmpty) {
           try {
             final decoded = utf8.decode(mfg.payload, allowMalformed: true);
             if (decoded.startsWith('{')) {
               final map = jsonDecode(decoded) as Map<String, dynamic>;
-              peerId = map['id']?.toString();
-              advertisedSid = map['sid']?.toString();
-              if (map['meta'] is Map) {
-                metadata = (map['meta'] as Map).map(
-                  (k, v) => MapEntry(k.toString(), v.toString()),
-                );
+              final id = map['id']?.toString();
+              if (id != null && id.isNotEmpty) {
+                peerId = id;
+                hasValidDiscoveryPayload = true;
+                advertisedSid = map['sid']?.toString();
+                if (map['meta'] is Map) {
+                  metadata = (map['meta'] as Map).map(
+                    (k, v) => MapEntry(k.toString(), v.toString()),
+                  );
+                }
               }
             } else if (mfg.payload[0] == 0x01 && mfg.payload.length > 1) {
-              peerId = utf8.decode(
+              final id = utf8.decode(
                 mfg.payload.sublist(1),
-                allowMalformed: true,
+                allowMalformed: false,
               );
-            } else if (decoded.trim().isNotEmpty) {
-              peerId = decoded.trim();
+              if (id.isNotEmpty) {
+                peerId = id;
+                hasValidDiscoveryPayload = true;
+              }
             }
           } catch (_) {}
         }
       }
     }
+
+    // A manufacturer-only advertisement (no matching GATT service) is only
+    // accepted if it carries a valid discovery payload (JSON or 0x01 compact).
+    // Broadcast advertisements also use 0xFFFF by default but do not expose
+    // a Nearby GATT service and must not be treated as connectable peers.
+    if (!hasService && !hasValidDiscoveryPayload) return;
 
     // Enforce serviceId filtering if configured
     if (serviceId != null &&

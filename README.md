@@ -85,9 +85,13 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 <string>Used to discover and connect to nearby peers over Wi-Fi and local network.</string>
 <key>NSBonjourServices</key>
 <array>
+    <!-- Declare each service type: _<serviceId>._tcp -->
+    <string>_production-set._tcp</string>
     <string>_nearby-app._tcp</string>
 </array>
 ```
+
+> **Note**: Apple platforms (iOS 14+, macOS 11+) require declaring each Bonjour service type in `NSBonjourServices` formatted as `_<serviceId>._tcp`. The declared service must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions` (e.g. `production-set` requires `_production-set._tcp`).
 
 ### macOS Entitlements (`macos/Runner/*.entitlements`)
 
@@ -258,13 +262,16 @@ await channel.startListening(strategy: DiscoveryStrategy.networkOnly);
 
 #### B. Convenience Service Broadcasts
 ```dart
-// Quick broadcast on default channel
-await nearby.broadcast(Uint8List.fromList([0xAA, 0xBB]));
+// Start listening on the default channel before receiving datagrams
+await nearby.defaultBroadcastChannel.startListening();
 
 // Listen on default broadcast stream
 nearby.onBroadcastReceived.listen((packet) {
   print('Received broadcast: ${packet.data}');
 });
+
+// Quick broadcast on default channel
+await nearby.broadcast(Uint8List.fromList([0xAA, 0xBB]));
 ```
 
 ---
