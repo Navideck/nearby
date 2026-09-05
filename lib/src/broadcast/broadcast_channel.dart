@@ -70,6 +70,7 @@ class BroadcastChannel {
   static String fingerprint(String senderId) =>
       BroadcastWire.senderFingerprint(senderId);
   bool get isBroadcasting => _isBroadcasting;
+  bool get isBleAdvertising => _bleAdvertising;
   bool get isListening => _isListening;
   Stream<BroadcastPacket> get stream => _packets.stream;
   Stream<BroadcastFailure> get errors => _errors.stream;
@@ -104,6 +105,7 @@ class BroadcastChannel {
         event,
       ) {
         if (event.state == PeripheralAdvertisingState.error) {
+          _bleAdvertising = false;
           _fail(
             DiscoveryMedium.ble,
             StateError(event.error ?? 'BLE advertising failed'),
