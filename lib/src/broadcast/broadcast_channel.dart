@@ -70,11 +70,44 @@ class BroadcastChannel {
   static String fingerprint(String senderId) =>
       BroadcastWire.senderFingerprint(senderId);
   bool get isBroadcasting => _isBroadcasting;
+  bool get isBleAdvertising => _bleAdvertising;
   bool get isListening => _isListening;
   Stream<BroadcastPacket> get stream => _packets.stream;
   Stream<BroadcastFailure> get errors => _errors.stream;
   bool get _networkEnabled => config.strategy != DiscoveryStrategy.bleOnly;
   bool get _bleEnabled => config.strategy != DiscoveryStrategy.networkOnly;
+
+  /// Returns true if at least one non-loopback IPv4 network interface is available
+  /// for multicast transmission (excluding common cellular interface names).
+  static Future<bool> isNetworkAvailable() =>
+      MulticastTransport.isNetworkAvailable();
+
+  /// Returns true if BLE peripheral advertising is ready.
+  static Future<bool> isBleAvailable() async {
+    try {
+      final readiness = await UniversalBlePeripheral.getAvailabilityState();
+      return readiness == PeripheralReadinessState.ready;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Checks whether at least one configured transport (Network or BLE) is available.
+  Future<bool> hasAvailableTransport({
+    Future<bool> Function()? isNetworkAvailable,
+    Future<bool> Function()? isBleAvailable,
+  }) async {
+    if (_networkEnabled &&
+        await (isNetworkAvailable?.call() ??
+            BroadcastChannel.isNetworkAvailable())) {
+      return true;
+    }
+    if (_bleEnabled &&
+        await (isBleAvailable?.call() ?? BroadcastChannel.isBleAvailable())) {
+      return true;
+    }
+    return false;
+  }
 
   void _fail(DiscoveryMedium medium, Object error) {
     if (!_errors.isClosed) _errors.add(BroadcastFailure(medium, error));
@@ -104,6 +137,7 @@ class BroadcastChannel {
         event,
       ) {
         if (event.state == PeripheralAdvertisingState.error) {
+          _bleAdvertising = false;
           _fail(
             DiscoveryMedium.ble,
             StateError(event.error ?? 'BLE advertising failed'),
@@ -194,6 +228,7 @@ class BroadcastChannel {
       case PeripheralReadinessState.unauthorized:
         throw StateError('BLE advertising $readiness');
       case PeripheralReadinessState.unsupported:
+        _bleAdvertising = false;
         if (defaultTargetPlatform != TargetPlatform.android) {
           _bleUnavailable = true;
           throw StateError('BLE advertising $readiness');
@@ -203,12 +238,14 @@ class BroadcastChannel {
   }
 
   void _handleBleSendError(Object error) {
-    final message = error.toString();
-    if ((error is StateError && error.message.contains('unsupported')) ||
-        message.contains('not supported')) {
+    final message = error.toString().toLowerCase();
+    final stateMessage = error is StateError ? error.message.toLowerCase() : '';
+    if (stateMessage.contains('unsupported') ||
+        message.contains('not supported') ||
+        message.contains('unsupported')) {
       _bleUnavailable = true;
-    } else if (message.contains('Bluetooth is not enabled') ||
-        message.contains('bluetoothOff')) {
+    } else if (message.contains('bluetooth is not enabled') ||
+        message.contains('bluetoothoff')) {
       _bleAdvertising = false;
       _promptEnableBluetoothIfNeeded();
     }

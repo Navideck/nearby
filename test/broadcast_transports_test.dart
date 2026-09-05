@@ -311,4 +311,79 @@ void main() {
     expect(central.enableBluetoothCalls, 1);
     await channel.dispose();
   });
+
+  test('hasAvailableTransport checks configured mediums and availability overrides', () async {
+    final hybridChannel = BroadcastChannel(
+      config: const BroadcastChannelConfig(channelId: 'transport-check-hybrid'),
+    );
+    final bleChannel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'transport-check-ble',
+        strategy: DiscoveryStrategy.bleOnly,
+      ),
+    );
+    final networkChannel = BroadcastChannel(
+      config: const BroadcastChannelConfig(
+        channelId: 'transport-check-net',
+        strategy: DiscoveryStrategy.networkOnly,
+      ),
+    );
+
+    expect(
+      await hybridChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => true,
+        isBleAvailable: () async => true,
+      ),
+      isTrue,
+    );
+
+    expect(
+      await hybridChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => true,
+        isBleAvailable: () async => false,
+      ),
+      isTrue,
+    );
+    expect(
+      await bleChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => true,
+        isBleAvailable: () async => false,
+      ),
+      isFalse,
+    );
+    expect(
+      await networkChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => true,
+        isBleAvailable: () async => false,
+      ),
+      isTrue,
+    );
+
+    expect(
+      await hybridChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => false,
+        isBleAvailable: () async => true,
+      ),
+      isTrue,
+    );
+    expect(
+      await networkChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => false,
+        isBleAvailable: () async => true,
+      ),
+      isFalse,
+    );
+
+    expect(
+      await hybridChannel.hasAvailableTransport(
+        isNetworkAvailable: () async => false,
+        isBleAvailable: () async => false,
+      ),
+      isFalse,
+    );
+
+    await hybridChannel.dispose();
+    await bleChannel.dispose();
+    await networkChannel.dispose();
+  });
 }
