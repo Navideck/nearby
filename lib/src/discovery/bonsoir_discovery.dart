@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bonsoir/bonsoir.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 
 import '../models/peer.dart';
@@ -39,7 +41,7 @@ class BonsoirDiscoveryService {
     final formattedType = formatServiceType(serviceType);
 
     final service = BonsoirService(
-      name: '$displayName-$peerId',
+      name: formatServiceName(displayName, peerId),
       type: formattedType,
       port: port,
       attributes: attributes,
@@ -146,6 +148,26 @@ class BonsoirDiscoveryService {
     await stopBrowsing();
     await _peerFoundController.close();
     await _peerLostController.close();
+  }
+
+  /// Fits the instance name into one 63-byte DNS label without splitting UTF-8.
+  /// Full display names and peer IDs remain available in TXT attributes.
+  static String formatServiceName(String displayName, String peerId) {
+    final peerBytes = utf8.encode(peerId);
+    // Leave room for the separator; hash oversized IDs to preserve uniqueness.
+    final suffix = peerBytes.length <= 62
+        ? peerId
+        : sha256.convert(peerBytes).toString().substring(0, 32);
+    final prefix = StringBuffer();
+    var remaining = 63 - 1 - utf8.encode(suffix).length;
+    for (final rune in displayName.runes) {
+      final character = String.fromCharCode(rune);
+      final size = utf8.encode(character).length;
+      if (size > remaining) break;
+      prefix.write(character);
+      remaining -= size;
+    }
+    return '$prefix-$suffix';
   }
 
   /// Normalizes a service ID into a fully-qualified Bonjour service type.
