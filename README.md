@@ -1,12 +1,31 @@
 # nearby
 
-A robust, multiplatform peer-to-peer discovery, secure data transfer, and connectionless broadcasting plugin for Flutter.
+<div align="center">
+  <img src="assets/nearby_banner.jpg" alt="nearby — Peer-to-peer connectivity across Wi-Fi and Bluetooth" width="100%">
+</div>
 
-Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby` supports dual communication paradigms over local Wi-Fi / LAN (mDNS + UDP/TCP) and Bluetooth Low Energy (BLE).
+[![pub package](https://img.shields.io/pub/v/nearby?label=nearby&color=FF2E63)](https://pub.dev/packages/nearby)
+[![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/Navideck/nearby)
+[![GitHub stars](https://img.shields.io/github/stars/Navideck/nearby?style=social)](https://github.com/Navideck/nearby)
+[![pub points](https://img.shields.io/pub/points/nearby?color=2E7D32)](https://pub.dev/packages/nearby/score)
+[![Flutter](https://img.shields.io/badge/Flutter-%3E%3D3.3.0-FF2E63.svg?logo=flutter)](https://flutter.dev)
+[![Dart](https://img.shields.io/badge/Dart-%3E%3D3.10.4-FF2E63.svg?logo=dart)](https://dart.dev)
 
----
+A transport-agnostic Flutter plugin for secure peer-to-peer discovery, data transfer, and connectionless broadcasting across local Wi-Fi/LAN and Bluetooth Low Energy (BLE).
 
-## 🌟 Dual Communication Paradigms
+Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby` selects and coordinates the available connectivity method behind one API.
+
+## Features
+
+- [Connected sessions](#connected-sessions): discover peers, authenticate, and exchange bytes, files, or streams over TCP or BLE GATT.
+- [Broadcast channels](#broadcast-channels): send connectionless 1:many datagrams over UDP multicast and BLE advertisements.
+- [Secure connections](#connected-sessions): ephemeral Diffie-Hellman keys, AES-256-GCM, HMAC authentication, SAS PIN verification, and pre-shared keys.
+- [Hybrid discovery](#api-support): use Wi-Fi/LAN and Bluetooth together without coupling application code to either transport.
+- [Platform-specific setup](#platform-specific-setup): Android, iOS, macOS, Windows, and Linux.
+- [API reference](#api-reference)
+
+## API Support
 
 `nearby` supports two complementary communication modes under a unified API:
 
@@ -28,7 +47,7 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
   (LAN / Wi-Fi)              (Peripheral)         (Datagrams)               (Manufacturer Data)
 ```
 
-| Feature | 🤝 Connected Sessions (1:1) | 📡 Broadcast Channels (1:Many) |
+| Feature | Connected Sessions (1:1) | Broadcast Channels (1:Many) |
 | :--- | :--- | :--- |
 | **Topology** | 1-to-1 Point-to-Point | 1-to-Many Unicast / Multicast |
 | **Connection Overhead** | Requires connection + SAS PIN handshake | **Zero connection overhead** (Stateless) |
@@ -37,82 +56,28 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 | **Data Types** | Byte packets, large disk files, continuous streams | Opaque datagrams with channel and sender framing |
 | **Best For** | File sharing, remote control, chat, audio streaming | Mesh beacons, presence |
 
----
+Hybrid discovery and sessions are supported on Android, iOS, macOS, Windows, and Linux. Broadcast transport details and platform limitations are listed under [Broadcast Channels](#broadcast-channels).
 
-## 📦 Features
+## Getting Started
 
-- **Multiplatform**: iOS, macOS, Android, Windows, Linux.
-- **Hybrid Transports**: Seamlessly multiplexes Wi-Fi/LAN and Bluetooth Low Energy.
-- **Multiplexed BLE Scanning**: Centralized BLE scan dispatcher prevents callback collisions when discovery and broadcast channels run concurrently.
-- **Encrypted sessions**: Ephemeral Diffie-Hellman keys, AES-256-GCM frame encryption, HMAC authentication, optional SAS PIN verification, and mutual pre-shared-key authentication.
-- **Chunked Payload Engine**: Reliable chunking, interleaving, and CRC32 verification for byte messages, files, and live streams.
-- **Connectionless Broadcast Channels**: Ultra-low latency UDP multicast and BLE manufacturer advertising for 1:Many real-time broadcasting.
+Add `nearby` to your `pubspec.yaml`:
 
----
-
-## ⚙️ Platform Permissions & Setup
-
-### Android (`android/app/src/main/AndroidManifest.xml`)
-
-```xml
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Local Network Permissions -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-
-    <!-- Bluetooth Permissions (Android 12+) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <!-- Legacy Bluetooth Permissions (Android 11 and lower) -->
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
-</manifest>
+```yaml
+dependencies:
+  nearby:
 ```
 
-### iOS (`ios/Runner/Info.plist`) & macOS (`macos/Runner/Info.plist`)
-
-```xml
-<key>NSBluetoothAlwaysUsageDescription</key>
-<string>Used to discover and communicate with nearby devices.</string>
-<key>NSBluetoothPeripheralUsageDescription</key>
-<string>Used to advertise this device to nearby peers.</string>
-<key>NSLocalNetworkUsageDescription</key>
-<string>Used to discover and connect to nearby peers over Wi-Fi and local network.</string>
-<key>NSBonjourServices</key>
-<array>
-    <string>_nearby-app._tcp</string>
-</array>
-```
-
-> **Note**: Apple platforms (iOS 14+, macOS 11+) require declaring each Bonjour service type in `NSBonjourServices` formatted as `_<serviceId>._tcp`. The declared service must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions` (e.g. `nearby-app` requires `_nearby-app._tcp`).
-
-### macOS Entitlements (`macos/Runner/*.entitlements`)
-
-Enable network client/server and Bluetooth in **both** `DebugProfile.entitlements` and `Release.entitlements`:
-
-```xml
-<key>com.apple.security.network.server</key>
-<true/>
-<key>com.apple.security.network.client</key>
-<true/>
-<key>com.apple.security.device.bluetooth</key>
-<true/>
-```
-
----
-
-## 🚀 Usage Guide
-
-### 1. Initialize `NearbyService`
+Import it where you want to use it:
 
 ```dart
 import 'package:nearby/nearby.dart';
+```
 
+> **Important**: Complete the [Platform-specific setup](#platform-specific-setup) before using discovery, advertising, or broadcasting.
+
+### Initialize `NearbyService`
+
+```dart
 final nearby = NearbyService(
   localDisplayName: 'Device A',
   // Optional: persistent peer ID across restarts (random hex ID by default)
@@ -120,11 +85,10 @@ final nearby = NearbyService(
 );
 ```
 
----
+## Connected Sessions
 
-### 2. Mode A: Connection-Oriented Sessions (1:1)
+### Start Advertising Presence
 
-#### A. Start Advertising Presence
 ```dart
 await nearby.startAdvertising(
   options: AdvertisingOptions(
@@ -136,7 +100,8 @@ await nearby.startAdvertising(
 );
 ```
 
-#### B. Discover Peers & Connect
+### Discover Peers and Connect
+
 ```dart
 // Listen to discovered peers
 nearby.discoveredPeersStream.listen((peers) {
@@ -165,7 +130,8 @@ secret into the encrypted session key without sending it. Use
 SAS PIN, or `SecurityMode.autoAccept` for encrypted but unauthenticated peers.
 Connected protocol version 3 does not accept older session frames.
 
-#### C. Handle Inbound Connection & PIN Verification
+### Handle Inbound Connection and PIN Verification
+
 ```dart
 // Advertiser verifies PIN with initiator
 nearby.connectionRequestsStream.listen((request) {
@@ -175,7 +141,8 @@ nearby.connectionRequestsStream.listen((request) {
 });
 ```
 
-#### D. Transfer Bytes, Files, or Streams
+### Transfer Bytes, Files, or Streams
+
 ```dart
 // 1. Send byte message
 await nearby.sendBytes(peerId, Uint8List.fromList(utf8.encode('Hello Nearby Peer!')));
@@ -204,9 +171,7 @@ nearby.payloadReceivedStream.listen((payload) {
 });
 ```
 
----
-
-### 3. Mode B: Connectionless Broadcasts (1:Many)
+## Broadcast Channels
 
 Broadcast channels support multiple distinct senders and connectionless listeners over UDP and BLE, without pairing. This branch introduces a new wire format; it does not accept the earlier unframed BLE or network broadcasts.
 
@@ -228,7 +193,8 @@ Transport failures are emitted on `channel.errors` independently; one unavailabl
 
 Scans are shared across Nearby listeners without overwriting `UniversalBle.onScanResult`. Nearby temporarily widens an existing scan; set `BleScanDispatcher.instance.resumeInterruptedScan` to restore the application's previous scan/filter when the last Nearby listener stops. Use only one BLE advertising owner per process; connected peripheral advertising and broadcast advertising share the platform peripheral API.
 
-#### A. Dedicated Broadcast Channel
+### Dedicated Broadcast Channel
+
 ```dart
 // Create a dedicated channel
 final channel = nearby.createBroadcastChannel(
@@ -258,7 +224,8 @@ await channel.sendNetwork(Uint8List.fromList([0x05, 0x06]));
 await channel.startListening(strategy: DiscoveryStrategy.networkOnly);
 ```
 
-#### B. Convenience Service Broadcasts
+### Convenience Service Broadcasts
+
 ```dart
 // Start listening on the default channel before receiving datagrams
 await nearby.defaultBroadcastChannel.startListening();
@@ -272,9 +239,7 @@ nearby.onBroadcastReceived.listen((packet) {
 await nearby.broadcast(Uint8List.fromList([0xAA, 0xBB]));
 ```
 
----
-
-### 4. Teardown & Lifecycle
+## Teardown and Lifecycle
 
 ```dart
 // Disconnect individual peers or all
@@ -289,9 +254,7 @@ await nearby.stopAdvertising();
 await nearby.dispose();
 ```
 
----
-
-## 📖 API Reference
+## API Reference
 
 ### `NearbyService`
 
@@ -317,9 +280,65 @@ await nearby.dispose();
 | `payloadReceivedStream` | Stream | Inbound payload stream (`Bytes`, `File`, `Stream`). |
 | `dispose()` | Method | Cleanly shuts down all sessions, servers, and channels. |
 
----
+## Platform-specific setup
 
-## 🧪 Testing
+### Android
+
+Add the required local-network and Bluetooth permissions to `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Local Network Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <!-- Bluetooth Permissions (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Legacy Bluetooth Permissions (Android 11 and lower) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+</manifest>
+```
+
+### iOS and macOS
+
+Add the usage descriptions and Bonjour service to `ios/Runner/Info.plist` and `macos/Runner/Info.plist`:
+
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Used to discover and communicate with nearby devices.</string>
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>Used to advertise this device to nearby peers.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Used to discover and connect to nearby peers over Wi-Fi and local network.</string>
+<key>NSBonjourServices</key>
+<array>
+    <string>_nearby-app._tcp</string>
+</array>
+```
+
+Apple platforms require each Bonjour service type in `NSBonjourServices` to use the `_<serviceId>._tcp` format. The declaration must match the `serviceId` passed to `AdvertisingOptions` and `DiscoveryOptions`; for example, `nearby-app` requires `_nearby-app._tcp`.
+
+#### macOS entitlements
+
+Enable network client/server and Bluetooth in both `DebugProfile.entitlements` and `Release.entitlements`:
+
+```xml
+<key>com.apple.security.network.server</key>
+<true/>
+<key>com.apple.security.network.client</key>
+<true/>
+<key>com.apple.security.device.bluetooth</key>
+<true/>
+```
+
+## Testing
 
 Run the full test suite (65+ unit & integration tests):
 
@@ -327,6 +346,6 @@ Run the full test suite (65+ unit & integration tests):
 flutter test
 ```
 
-## 📄 License
+## License
 
 MIT License.
