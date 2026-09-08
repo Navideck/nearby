@@ -18,45 +18,38 @@ Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby`
 
 ## Features
 
-- [Connected sessions](#connected-sessions): discover peers, authenticate, and exchange bytes, files, or streams over TCP or BLE GATT.
-- [Broadcast channels](#broadcast-channels): send connectionless 1:many datagrams over UDP multicast and BLE advertisements.
-- [Secure connections](#connected-sessions): ephemeral Diffie-Hellman keys, AES-256-GCM, HMAC authentication, SAS PIN verification, and pre-shared keys.
-- [Hybrid discovery](#api-support): use Wi-Fi/LAN and Bluetooth together without coupling application code to either transport.
-- [Platform-specific setup](#platform-specific-setup): Android, iOS, macOS, Windows, and Linux.
+- [Advertising and Discovery](#advertising-and-discovery)
+- [Connecting](#connecting)
+- [Sending Data](#sending-data)
+- [Broadcast Channels](#broadcast-channels)
+- [Teardown and Lifecycle](#teardown-and-lifecycle)
+- [Platform-specific setup](#platform-specific-setup)
 - [API reference](#api-reference)
 
 ## API Support
 
-`nearby` supports two complementary communication modes under a unified API:
+### Connected Sessions (`NearbyService`)
 
-```
-                                  ┌─────────────────────────┐
-                                  │      NearbyService      │
-                                  └───────────┬─────────────┘
-                                              │
-                      ┌───────────────────────┴───────────────────────┐
-                      ▼                                               ▼
-         ┌─────────────────────────┐                     ┌─────────────────────────┐
-         │   Connected Sessions    │                     │   Broadcast Channels    │
-         │      (1:1 P2P)          │                     │      (1:Many)           │
-         └────────────┬────────────┘                     └────────────┬────────────┘
-                      │                                               │
-        ┌─────────────┴─────────────┐                   ┌─────────────┴─────────────┐
-        ▼                           ▼                   ▼                           ▼
-   TCP Sockets                 BLE GATT           UDP Multicast              BLE Advertisements
-  (LAN / Wi-Fi)              (Peripheral)         (Datagrams)               (Manufacturer Data)
-```
+| Capability | Android | iOS | macOS | Windows | Linux |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| Wi-Fi/LAN discovery and sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| BLE discovery and outgoing sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| BLE advertising and inbound sessions | ✔️ | ✔️ | ✔️ | ✔️ | ❌ |
+| Bytes, files, and streams | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| Encrypted and authenticated sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 
-| Feature | Connected Sessions (1:1) | Broadcast Channels (1:Many) |
-| :--- | :--- | :--- |
-| **Topology** | 1-to-1 Point-to-Point | 1-to-Many Unicast / Multicast |
-| **Connection Overhead** | Requires connection + SAS PIN handshake | **Zero connection overhead** (Stateless) |
-| **Device Scale** | Bound by platform TCP/GATT limits (~3–7 BLE) | **Unlimited listeners** simultaneously |
-| **Transports** | TCP sockets & BLE GATT characteristics | UDP Multicast datagrams & BLE Advertisements |
-| **Data Types** | Byte packets, large disk files, continuous streams | Opaque datagrams with channel and sender framing |
-| **Best For** | File sharing, remote control, chat, audio streaming | Mesh beacons, presence |
+Connected sessions are 1:1 and use TCP sockets or BLE GATT. Hybrid connections prefer TCP and fall back to BLE when both are available.
 
-Hybrid discovery and sessions are supported on Android, iOS, macOS, Windows, and Linux. Broadcast transport details and platform limitations are listed under [Broadcast Channels](#broadcast-channels).
+### Broadcast Channels (`BroadcastChannel`)
+
+| Capability | Android | iOS | macOS | Windows | Linux |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| UDP multicast send and receive | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| BLE advertisement receive | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| BLE advertisement transmit | ✔️ | ✔️ foreground | ✔️ foreground | ✔️ | ❌ |
+| Hybrid UDP and BLE operation | ✔️ | ✔️ | ✔️ | ✔️ | UDP only |
+
+Broadcast channels are connectionless 1:many datagrams. They are neither encrypted nor authenticated.
 
 ## Getting Started
 
@@ -85,7 +78,7 @@ final nearby = NearbyService(
 );
 ```
 
-## Connected Sessions
+## Advertising and Discovery
 
 ### Start Advertising Presence
 
@@ -100,7 +93,7 @@ await nearby.startAdvertising(
 );
 ```
 
-### Discover Peers and Connect
+### Discover Peers
 
 ```dart
 // Listen to discovered peers
@@ -116,10 +109,17 @@ await nearby.startDiscovery(
     strategy: DiscoveryStrategy.hybrid,
   ),
 );
+```
 
+## Connecting
+
+```dart
 // Connect to a peer (TCP first, BLE fallback)
+final peers = await nearby.discoveredPeersStream.firstWhere(
+  (peers) => peers.isNotEmpty,
+);
 final connected = await nearby.requestConnection(
-  peer,
+  peers.first,
   preSharedKey: configuredSecret,
 );
 ```
@@ -141,7 +141,7 @@ nearby.connectionRequestsStream.listen((request) {
 });
 ```
 
-### Transfer Bytes, Files, or Streams
+## Sending Data
 
 ```dart
 // 1. Send byte message
@@ -348,4 +348,4 @@ flutter test
 
 ## License
 
-MIT License.
+BSD 3-Clause License.
