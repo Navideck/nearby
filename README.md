@@ -187,7 +187,7 @@ BLE carries at most **10 application bytes**. Nearby adds a four-byte channel fi
 | Linux | Unsupported peripheral mode | Yes | Yes |
 | Web | Unsupported | Unsupported | Unsupported |
 
-Windows transmit requires [universal_ble PR #290](https://github.com/Navideck/universal_ble/pull/290) until it is released; use a dependency override to that PR's commit. Apple background advertising omits local names, so this carrier is foreground-only. Requested update frequency is not an on-air guarantee, especially with Windows' best-effort advertising policy.
+Apple background advertising omits local names, so this carrier is foreground-only. Requested update frequency is not an on-air guarantee, especially with Windows' best-effort advertising policy.
 
 Transport failures are emitted on `channel.errors` independently; one unavailable transport does not stop the other. Network transport joins IPv4 interfaces, includes loopback, sends an IPv4 broadcast fallback, and refreshes interfaces every five seconds. Nearby holds Android's multicast lock only while a network listener needs it. BLE receive timestamps use native microsecond timestamps when available. Busy BLE sends skip updates instead of queuing stale bytes.
 
