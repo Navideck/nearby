@@ -1,29 +1,15 @@
 PODS:
-  - bonsoir_darwin (0.0.1):
-    - Flutter
-    - FlutterMacOS
   - FlutterMacOS (1.0.0)
-  - universal_ble (0.0.1):
-    - Flutter
-    - FlutterMacOS
 
 DEPENDENCIES:
-  - bonsoir_darwin (from `Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin`)
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - universal_ble (from `Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin`)
 
 EXTERNAL SOURCES:
-  bonsoir_darwin:
-    :path: Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin
   FlutterMacOS:
     :path: Flutter/ephemeral
-  universal_ble:
-    :path: Flutter/ephemeral/.symlinks/plugins/universal_ble/darwin
 
 SPEC CHECKSUMS:
-  bonsoir_darwin: 722434d059e48f381a3af21440dd79d95cc41c78
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
-  universal_ble: a322ebabee64f0ec27a313e89a5dd6967f37a60f
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 

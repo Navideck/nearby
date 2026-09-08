@@ -27,6 +27,12 @@ flutter:
       android:
         package: com.navideck.nearby
         pluginClass: NearbyPlugin
+      ios:
+        pluginClass: NearbyPlugin
+        sharedDarwinSource: true
+      macos:
+        pluginClass: NearbyPlugin
+        sharedDarwinSource: true
 
 platforms:
   android:
