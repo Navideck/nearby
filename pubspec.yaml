@@ -1,5 +1,5 @@
 name: nearby
-description: "Nearby peer sessions and connectionless UDP/BLE broadcasting for Flutter."
+description: "Peer-to-peer connectivity across Wi-Fi and Bluetooth"
 version: 0.0.1
 homepage:
 
