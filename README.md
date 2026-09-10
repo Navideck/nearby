@@ -16,6 +16,8 @@ A transport-agnostic Flutter plugin for secure peer-to-peer discovery, data tran
 
 Inspired by Apple Multipeer Connectivity and Google Nearby Connections, `nearby` selects and coordinates the available connectivity method behind one API.
 
+For lower-level Bluetooth APIs, see [universal_ble](https://pub.dev/packages/universal_ble) and [universal_bluetooth_classic](https://pub.dev/packages/universal_bluetooth_classic).
+
 ## Features
 
 - [Advertising and Discovery](#advertising-and-discovery)
