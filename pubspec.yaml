@@ -1,6 +1,6 @@
 name: nearby
 description: "Peer-to-peer connectivity across Wi-Fi and Bluetooth"
-version: 0.0.1
+version: 0.1.0
 repository: https://github.com/Navideck/nearby
 
 environment:
