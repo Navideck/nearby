@@ -27,33 +27,31 @@ class BleTransportRegistry {
     if (_callbacksInitialized) return;
     _callbacksInitialized = true;
 
-    UniversalBle.onValueChange =
-        (String deviceId, String characteristicId, Uint8List value, dynamic _) {
-          final key = normalizeDeviceId(deviceId);
-          final transport =
-              _centralTransports[key] ??
-              (_centralTransports.length == 1
-                  ? _centralTransports.values.first
-                  : null);
+    UniversalBle.onValueChange = (BleCharacteristicValue update) {
+      final key = normalizeDeviceId(update.deviceId);
+      final transport =
+          _centralTransports[key] ??
+          (_centralTransports.length == 1
+              ? _centralTransports.values.first
+              : null);
 
-          if (transport != null && !transport.isClosed) {
-            if (BleUuidParser.compareStrings(
-              characteristicId,
-              kNearbyBleRxCharUuid,
-            )) {
-              transport.framer.addBytes(value);
-            }
-          }
-        };
+      if (transport != null && !transport.isClosed) {
+        if (BleUuidParser.compareStrings(
+          update.characteristicId,
+          kNearbyBleRxCharUuid,
+        )) {
+          transport.framer.addBytes(update.value);
+        }
+      }
+    };
 
-    UniversalBle.onConnectionChange =
-        (String deviceId, bool isConnected, String? error) {
-          if (!isConnected) {
-            final key = normalizeDeviceId(deviceId);
-            final transport = _centralTransports.remove(key);
-            transport?.close();
-          }
-        };
+    UniversalBle.onConnectionChange = (BleConnectionChange update) {
+      if (!update.isConnected) {
+        final key = normalizeDeviceId(update.deviceId);
+        final transport = _centralTransports.remove(key);
+        transport?.close();
+      }
+    };
   }
 
   // --- Central Management ---

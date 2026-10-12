@@ -16,6 +16,11 @@ dependencies:
   crypto: ^3.0.3
   pointycastle: ^4.0.0
 
+dependency_overrides:
+  universal_ble:
+    git:
+      url: https://github.com/Navideck/universal_ble.git
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
