@@ -1,3 +1,7 @@
+## 0.2.0
+* Upgrade universal_ble to 3.0
+* Migrate to new universal_ble APIs
+
 ## 0.1.0
 
 * Initial release.
