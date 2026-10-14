@@ -53,7 +53,7 @@ Connected sessions are 1:1 and use TCP sockets or BLE GATT. Hybrid connections p
 
 Broadcast channels are connectionless 1:many datagrams. They are neither encrypted nor authenticated.
 
-**Legend:** ✔️ supported · — not supported.
+**Legend:** ✔️ supported, — not supported.
 
 ## Getting Started
 
