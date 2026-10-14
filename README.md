@@ -36,7 +36,7 @@ For lower-level Bluetooth APIs, see [universal_ble](https://pub.dev/packages/uni
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | Wi-Fi/LAN discovery and sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | BLE discovery and outgoing sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
-| BLE advertising and inbound sessions | ✔️ | ✔️ | ✔️ | ✔️ | ❌ |
+| BLE advertising and inbound sessions | ✔️ | ✔️ | ✔️ | ✔️ | — |
 | Bytes, files, and streams | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | Encrypted and authenticated sessions | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 
@@ -48,10 +48,12 @@ Connected sessions are 1:1 and use TCP sockets or BLE GATT. Hybrid connections p
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | UDP multicast send and receive | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | BLE advertisement receive | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
-| BLE advertisement transmit | ✔️ | ✔️ foreground | ✔️ foreground | ✔️ | ❌ |
+| BLE advertisement transmit | ✔️ | ✔️ foreground | ✔️ foreground | ✔️ | — |
 | Hybrid UDP and BLE operation | ✔️ | ✔️ | ✔️ | ✔️ | UDP only |
 
 Broadcast channels are connectionless 1:many datagrams. They are neither encrypted nor authenticated.
+
+**Legend:** ✔️ supported · — not supported.
 
 ## Getting Started
 
