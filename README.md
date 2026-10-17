@@ -350,6 +350,17 @@ Run the full test suite (65+ unit & integration tests):
 flutter test
 ```
 
+## Releasing
+
+Publishing to pub.dev is automated by [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which runs on a version tag push and uses the [`dart-lang/setup-dart` publish workflow](https://dart.dev/tools/pub/automated-publishing). To cut a release, add a `CHANGELOG.md` entry, set the matching `version` in `pubspec.yaml`, then push a tag equal to that version (no `v` prefix):
+
+```bash
+git tag 0.3.0
+git push origin 0.3.0
+```
+
+This requires automated publishing to be enabled on pub.dev for the package, with repository `Navideck/nearby`, tag pattern `{{version}}`, and the required GitHub Actions environment `pub.dev`.
+
 ## License
 
 BSD 3-Clause License.

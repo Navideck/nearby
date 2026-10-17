@@ -1,0 +1,21 @@
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+    # Must align with the tag-pattern configured on pub.dev for this package.
+    # If you prefer tags like 'v1.2.3', prefix the pattern with 'v'.
+    - '[0-9]+.[0-9]+.[0-9]+*' # tag-pattern on pub.dev: '{{version}}'
+
+# Publish using the reusable workflow from dart-lang, which sets up Flutter
+# (the package depends on the Flutter SDK), runs a dry-run check, and publishes.
+jobs:
+  publish:
+    permissions:
+      id-token: write # Required for authentication using OIDC
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      # Must match the environment name configured under "Require GitHub Actions
+      # environment" on pub.dev for this package.
+      environment: 'pub.dev'
+      # working-directory: path/to/package/within/repository
