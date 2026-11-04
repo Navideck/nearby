@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import '../models/peer.dart';
+import '../transport/ble/ble_peripheral_coordinator.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
 import '../transport/ble_transport.dart';
 
@@ -19,6 +20,8 @@ class BleDiscoveryService {
 
   bool _isScanning = false;
   bool _isAdvertising = false;
+  bool _ownsPeripheralHandlers = false;
+  String? _registeredServiceUuid;
   StreamSubscription? _connectionStateSub;
   StreamSubscription? _mtuSub;
 
@@ -196,6 +199,7 @@ class BleDiscoveryService {
   }) async {
     await stopAdvertising();
     _isAdvertising = true;
+    BlePeripheralCoordinator.instance.acquireExclusive(this);
 
     final targetUuid =
         serviceUuid ??
@@ -255,6 +259,7 @@ class BleDiscoveryService {
       ) {
         return PeripheralReadRequestResult(value: Uint8List(0), status: 0);
       });
+      _ownsPeripheralHandlers = true;
 
       _connectionStateSub = UniversalBlePeripheral.connectionStateStream.listen(
         (event) {
@@ -301,8 +306,13 @@ class BleDiscoveryService {
         ],
       );
 
-      await UniversalBlePeripheral.clearServices();
+      // Remove only Nearby's target service UUID if previously registered so
+      // host application GATT services (such as BLE HID) are preserved.
+      try {
+        await UniversalBlePeripheral.removeService(targetUuid);
+      } catch (_) {}
       await UniversalBlePeripheral.addService(service);
+      _registeredServiceUuid = targetUuid;
 
       final advertiseLocalName = defaultTargetPlatform == TargetPlatform.android
           ? null
@@ -326,13 +336,23 @@ class BleDiscoveryService {
 
   /// Stops BLE peripheral advertising.
   Future<void> stopAdvertising() async {
+    final ownsCoordinator = BlePeripheralCoordinator.instance.ownsExclusive(
+      this,
+    );
     if (!_isAdvertising &&
+        _registeredServiceUuid == null &&
+        !_ownsPeripheralHandlers &&
+        !ownsCoordinator &&
         _connectionStateSub == null &&
         _mtuSub == null &&
         _advertisingStateSub == null) {
       return;
     }
+    final wasAdvertising = _isAdvertising;
     _isAdvertising = false;
+    final registeredUuid = _registeredServiceUuid;
+    _registeredServiceUuid = null;
+
     await _connectionStateSub?.cancel();
     _connectionStateSub = null;
     await _mtuSub?.cancel();
@@ -340,10 +360,25 @@ class BleDiscoveryService {
     await _advertisingStateSub?.cancel();
     _advertisingStateSub = null;
 
-    try {
-      await UniversalBlePeripheral.stopAdvertising();
-      await UniversalBlePeripheral.clearServices();
-    } catch (_) {}
+    if (_ownsPeripheralHandlers) {
+      _ownsPeripheralHandlers = false;
+      try {
+        UniversalBlePeripheral.setWriteRequestHandlers(null);
+        UniversalBlePeripheral.setReadRequestHandlers(null);
+      } catch (_) {}
+    }
+
+    if (wasAdvertising) {
+      try {
+        await UniversalBlePeripheral.stopAdvertising();
+      } catch (_) {}
+    }
+    if (registeredUuid != null) {
+      try {
+        await UniversalBlePeripheral.removeService(registeredUuid);
+      } catch (_) {}
+    }
+    await BlePeripheralCoordinator.instance.releaseExclusive(this);
   }
 
   /// Disposes resources.

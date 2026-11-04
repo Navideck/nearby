@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import '../transport/ble/ble_peripheral_coordinator.dart';
 import '../transport/ble/ble_scan_dispatcher.dart';
 import 'broadcast_packet.dart';
 import 'broadcast_wire.dart';
@@ -82,9 +83,14 @@ class BroadcastChannel {
   static Future<bool> isNetworkAvailable() =>
       MulticastTransport.isNetworkAvailable();
 
-  /// Returns true if BLE peripheral advertising is ready.
+  /// Returns true if BLE peripheral advertising is ready and not exclusively
+  /// held by a GATT server or host application peripheral session.
   static Future<bool> isBleAvailable() async {
     try {
+      if (await BlePeripheralCoordinator.instance
+          .isExclusiveAdvertisingActive()) {
+        return false;
+      }
       final readiness = await UniversalBlePeripheral.getAvailabilityState();
       return readiness == PeripheralReadinessState.ready;
     } catch (_) {
@@ -254,8 +260,20 @@ class BroadcastChannel {
 
   Future<void> _sendBle(Uint8List bytes) async {
     try {
+      if (await BlePeripheralCoordinator.instance
+          .isExclusiveAdvertisingActive()) {
+        // Yield BLE peripheral radio to the active GATT server or host app
+        // advertiser without calling stopAdvertising() on their session.
+        _bleAdvertising = false;
+        return;
+      }
       final readiness = await UniversalBlePeripheral.getAvailabilityState();
       if (!_isBroadcasting || !_canAdvertise(readiness)) return;
+      if (await BlePeripheralCoordinator.instance
+          .isExclusiveAdvertisingActive()) {
+        _bleAdvertising = false;
+        return;
+      }
       if (_bleAdvertising) await UniversalBlePeripheral.stopAdvertising();
       _bleAdvertising = false;
       if (!_isBroadcasting) return;
@@ -288,10 +306,13 @@ class BroadcastChannel {
     await _network.stopSending();
     if (_bleAdvertising) {
       _bleAdvertising = false;
-      try {
-        await UniversalBlePeripheral.stopAdvertising();
-      } catch (e) {
-        _fail(DiscoveryMedium.ble, e);
+      if (!await BlePeripheralCoordinator.instance
+          .isExclusiveAdvertisingActive()) {
+        try {
+          await UniversalBlePeripheral.stopAdvertising();
+        } catch (e) {
+          _fail(DiscoveryMedium.ble, e);
+        }
       }
     }
     await _advertisingState?.cancel();

@@ -5,64 +5,76 @@ import 'package:universal_ble/universal_ble.dart';
 
 import '../ble_transport.dart';
 
+typedef _CentralBleSubscriptions = ({
+  StreamSubscription<Uint8List> valueSub,
+  StreamSubscription<BleConnectionChange> connectionSub,
+});
+
 /// Centralized registry and event dispatcher for active BLE transports.
+///
+/// Subscribes to per-device [UniversalBle] broadcast streams rather than
+/// mutating global `UniversalBle.onValueChange` or
+/// `UniversalBle.onConnectionChange` callbacks so host applications can
+/// coexist on the same Bluetooth stack without losing events.
 class BleTransportRegistry {
   BleTransportRegistry._();
 
   static final BleTransportRegistry instance = BleTransportRegistry._();
 
   final Map<String, BleTransport> _centralTransports = {};
+  final Map<String, _CentralBleSubscriptions> _centralSubscriptions = {};
   final Map<String, BlePeripheralTransport> _peripheralTransports = {};
   final StreamController<BlePeripheralTransport> _incomingTransportsController =
       StreamController<BlePeripheralTransport>.broadcast();
-
-  bool _callbacksInitialized = false;
 
   /// Stream of newly connected incoming BLE central transports.
   Stream<BlePeripheralTransport> get incomingPeripheralTransports =>
       _incomingTransportsController.stream;
 
-  /// Ensures global UniversalBle callbacks are hooked to route incoming frames and disconnects.
-  void ensureCallbacksInitialized() {
-    if (_callbacksInitialized) return;
-    _callbacksInitialized = true;
-
-    UniversalBle.onValueChange = (BleCharacteristicValue update) {
-      final key = normalizeDeviceId(update.deviceId);
-      final transport =
-          _centralTransports[key] ??
-          (_centralTransports.length == 1
-              ? _centralTransports.values.first
-              : null);
-
-      if (transport != null && !transport.isClosed) {
-        if (BleUuidParser.compareStrings(
-          update.characteristicId,
-          kNearbyBleRxCharUuid,
-        )) {
-          transport.framer.addBytes(update.value);
-        }
-      }
-    };
-
-    UniversalBle.onConnectionChange = (BleConnectionChange update) {
-      if (!update.isConnected) {
-        final key = normalizeDeviceId(update.deviceId);
-        final transport = _centralTransports.remove(key);
-        transport?.close();
-      }
-    };
-  }
-
   // --- Central Management ---
 
   void registerCentral(String deviceId, BleTransport transport) {
-    ensureCallbacksInitialized();
-    _centralTransports[normalizeDeviceId(deviceId)] = transport;
+    final key = normalizeDeviceId(deviceId);
+    _cancelCentralSubscriptions(key);
+    _centralTransports[key] = transport;
+
+    final valueSub = UniversalBle.characteristicValueStream(
+      deviceId,
+      kNearbyBleRxCharUuid,
+    ).listen((value) {
+      if (!transport.isClosed) {
+        transport.framer.addBytes(value);
+      }
+    });
+
+    final connectionSub = UniversalBle.connectionChangeStream(deviceId).listen((
+      update,
+    ) {
+      if (!update.isConnected) {
+        final removed = _centralTransports.remove(key);
+        _cancelCentralSubscriptions(key);
+        unawaited(removed?.close());
+      }
+    });
+
+    _centralSubscriptions[key] = (
+      valueSub: valueSub,
+      connectionSub: connectionSub,
+    );
   }
 
   void unregisterCentral(String deviceId) {
-    _centralTransports.remove(normalizeDeviceId(deviceId));
+    final key = normalizeDeviceId(deviceId);
+    _centralTransports.remove(key);
+    _cancelCentralSubscriptions(key);
+  }
+
+  void _cancelCentralSubscriptions(String key) {
+    final subs = _centralSubscriptions.remove(key);
+    if (subs != null) {
+      unawaited(subs.valueSub.cancel());
+      unawaited(subs.connectionSub.cancel());
+    }
   }
 
   BleTransport? getCentral(String deviceId) =>
@@ -115,6 +127,9 @@ class BleTransportRegistry {
 
   /// Clears all registered transports (useful for teardown/tests).
   void clear() {
+    for (final key in _centralSubscriptions.keys.toList()) {
+      _cancelCentralSubscriptions(key);
+    }
     _centralTransports.clear();
     _peripheralTransports.clear();
   }

@@ -9,6 +9,12 @@ class FakeCentral extends Fake implements UniversalBlePlatform {
   int starts = 0, stops = 0, enableBluetoothCalls = 0;
   OnScanResult? callback;
   @override
+  bool get hasAddressDeviceIds => true;
+  @override
+  void setSkipDuplicates(bool enabled) {}
+  @override
+  void resetScanDeduplication() {}
+  @override
   Stream<BleDevice> get scanStream => packets.stream;
   @override
   set onScanResultUpdate(OnScanResult? value) => callback = value;
